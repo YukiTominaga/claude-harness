@@ -10,7 +10,7 @@
       "name": "crystal-harness",
       "source": "./",
       "description": "Multi-agent harness for long-running application development.",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "category": "workflow",
       "keywords": ["harness", "multi-agent", "evaluation", "qa"]
     }

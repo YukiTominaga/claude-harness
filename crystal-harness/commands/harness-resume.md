@@ -17,7 +17,8 @@ Read the `crystal-harness:harness-protocol` skill, then reconstruct in this orde
 3. `.harness/config.json` — how to run the project.
 4. `.harness/spec.md` — what is being built.
 5. The current sprint's `contract.md`, and `qa.md` / `verdict.json` if the phase is
-   `revising`.
+   `revising`. If the phase is `final-qa` or `final-building`, the current
+   `.harness/final/NN/` round instead — there is no contract for a final assessment.
 
 Do not read `journal.md` to reconstruct state. It is a human log and it contains
 superseded decisions.
@@ -46,10 +47,14 @@ resumed agent that guesses wrong rebuilds working code a different way.
 
 Print a reconstruction summary and stop for confirmation:
 
-- phase, current sprint, and the sprint table with statuses
-- the handoff's "Current goal", "In progress", "Known broken", and "Next action"
-- revision count and `maxRevisionsPerSprint`, and any issue id already at 2
-  recurrences
+- phase, current sprint or final round, and the sprint table with statuses
+- whether a final assessment has passed yet — if not, say that the run is unfinished
+  regardless of how many sprints passed
+- the handoff's "Current goal", "In progress", "Known broken", "Approaches already
+  tried and rejected", and "Next action"
+- revision count against `maxRevisionsPerSprint`, and any issue id at ≥ 2 recurrences
+  together with its `approachChanges` count
+- the `weightedScore` trend across rounds, and the ledger totals so far
 - `lastGoodCommit` and whether the working tree is clean
 
 Ask: continue from "Next action", or roll back to `lastGoodCommit` first?

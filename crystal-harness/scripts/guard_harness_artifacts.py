@@ -65,10 +65,11 @@ def project_relative(target, real_cwd):
 
 
 def is_verdict_artifact(parts):
+    """.harness/{sprints,final}/NN/{qa.md,verdict.json,screenshots/...}"""
     return (
         len(parts) >= 4
         and parts[0] == ".harness"
-        and parts[1] == "sprints"
+        and parts[1] in ("sprints", "final")
         and parts[3] in PROTECTED_LEAVES
     )
 

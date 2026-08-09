@@ -83,12 +83,28 @@ very large data sets, refresh mid-flow, back navigation.>
 ## Non-goals
 <What this product deliberately does not do. Each with a one-line reason.>
 
-## Where AI adds real value
-<Only genuine cases: places where the product's job needs judgement over
-unstructured input, or where a user would otherwise do tedious manual work.
-For each, say what the input and output are and what happens when the model is
-wrong or unavailable. If there is no honest case, write "None — this product
-does not need a model in the loop." Do not invent an assistant sidebar.>
+## AI features
+<Actively look for places a model earns its keep, and be ambitious about it.
+Two forms, in order of value:
+
+1. **An agent that drives the product's own functionality through tools.**
+   The strongest AI feature in an application is one that can operate the app:
+   given "set the tempo to 120, lay down a four-bar drum loop and add reverb to
+   the bus", it calls the same operations the UI calls. Describe which of the
+   product's capabilities become tools, what the agent can and cannot reach,
+   and what the user sees while it works.
+2. **Judgement over unstructured input** — classification, extraction,
+   summarisation, or drafting that the user would otherwise do by hand.
+
+For each: the input, the output, what the user sees while it runs, and what
+happens when the model is wrong, slow, or unavailable. A feature with no
+defined failure behaviour is not specified.
+
+Two bars this section must clear. A chat panel bolted onto the side that can
+only answer questions about the app is not an AI feature — it is a help menu.
+And where correctness is exact arithmetic or a lookup, say so and keep the model
+out of that path. If after genuinely looking there is no case, write "None" and
+give the reason in one sentence — but look first.>
 
 ## Feature ordering
 <Numbered, most important first. Item 1 must be the smallest thing that is

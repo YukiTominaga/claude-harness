@@ -1,51 +1,109 @@
 ---
 name: qa-rubric
-description: The graded rubric and pass/fail thresholds the evaluator applies to a sprint — functionality, design quality, originality, craft — plus the verdict.json schema. Use when grading a sprint, writing qa.md or verdict.json, or calibrating what a score means.
+description: The graded rubric and pass/fail thresholds the evaluator applies — product depth, functionality, design quality, originality, craft, code quality — plus the verdict.json schema. Use when grading a sprint or a final end-of-run assessment, writing qa.md or verdict.json, or calibrating what a score means.
 ---
 
 # QA rubric
 
 "Is this good?" is not a question an agent can answer consistently. This rubric
-replaces it with four dimensions, each with a written behavioral anchor per score
-and a hard threshold. Grade against the anchors, not against your impression.
+replaces it with six dimensions, each with a written behavioral anchor per score and
+a hard threshold. Grade against the anchors, not against your impression.
 
 Read `references/calibration-examples.md` before scoring for the first time in a
 run. The anchors alone drift; the worked examples are what hold the scale still.
 
+## The two contexts you grade in
+
+| | Sprint QA | Final QA |
+| --- | --- | --- |
+| Graded against | `contract.md`'s acceptance criteria | `spec.md` as a whole |
+| Scope of "does it work" | this sprint's scope items | every feature the spec promised |
+| Regression duty | earlier sprints must still work | the whole product must hold together |
+| Artifact | `.harness/sprints/NN/` | `.harness/final/NN/` |
+
+**A run is not finished until a final QA passes.** Sprint verdicts grade increments
+against contracts they helped write; only the final pass asks whether the product
+the spec described actually exists. A build where every sprint passed and the final
+QA fails is a normal and expected outcome, not a contradiction.
+
 ## Thresholds
 
-| Dimension | Threshold | Role |
+| Dimension | Threshold | |
 | --- | --- | --- |
-| Functionality | **≥ 4** | **Gate.** Below 4 the sprint fails regardless of every other score. |
-| Design quality | ≥ 3 | |
-| Originality | ≥ 3 | |
-| Craft | ≥ 3 | |
+| Product depth | **≥ 4** | weight 3 |
+| Design quality | **≥ 4** | weight 3 |
+| Originality | **≥ 4** | weight 3 |
+| Functionality | **≥ 4** | weight 2 |
+| Craft | ≥ 3 | weight 1 |
+| Code quality | ≥ 3 | weight 1 |
 
-`overall: "pass"` requires **all four** thresholds met **and** zero blocking issues
-**and** zero acceptance criteria marked `fail`. Anything else is `overall: "fail"`.
+`overall: "pass"` requires **every** threshold met, **and** zero blocking issues,
+**and** zero acceptance criteria marked `fail`. Any one dimension below its
+threshold fails the sprint or the run.
+
+The emphasis on product depth, design quality and originality is expressed by their
+thresholds sitting at 4 while craft and code quality sit at 3 — a product that is
+merely tidy and merely working does not pass. Functionality also sits at 4: a
+full-stack app that does not work is not gradeable on anything else.
+
+Also report `weightedScore` — the weighted mean of the six scores using the weights
+above. It is **not** a gate. It exists so a human can see whether rounds are
+improving, plateauing, or regressing, which is the signal for whether another round
+is worth its cost.
 
 A criterion marked `not_verified` never counts toward a pass. If enough criteria are
-`not_verified` that you cannot tell whether the sprint works, the verdict is `fail`
+`not_verified` that you cannot tell whether the work is sound, the verdict is `fail`
 with a blocking issue naming what could not be checked and why.
 
-## 1. Functionality — does it work end-to-end for a real user
+## 1. Product depth — is the feature real, or is it a facade
 
-Includes edge paths and error paths, not only the happy path.
+This is the dimension that catches the most common way a generated app disappoints:
+everything is present and nothing is finished. Grade what a user can actually *do*,
+not what is rendered.
+
+- **0** — The surface does not exist.
+- **1** — The surface renders but is entirely static: no control does anything.
+- **2** — Controls exist and respond, but the substance is display-only. Values can
+  be read, not manipulated. Lists cannot be reordered, items cannot be edited in
+  place, the visualisation cannot be interacted with.
+- **3** — The primary object can be created and read, but a significant verb the
+  domain implies is missing — no edit, no delete, no reorder, no drag, no undo.
+- **4** — Every verb the contract (sprint QA) or the spec (final QA) implies is
+  present and works. A user can complete real work end to end without hitting a
+  stub.
+- **5** — As 4, plus depth the spec implied but did not enumerate: bulk actions,
+  keyboard paths, sensible defaults, states that compose.
+
+The reference failure, from a build of a digital audio workstation: *"several core
+DAW features are display-only without interactive depth: clips can't be dragged or
+moved on the timeline, there are no instrument UI panels, and no visual effect
+editors."* Every one of those surfaces rendered. None of them scored above 2.
+
+Buttons that toggle but do nothing, sliders wired to no effect, and "coming soon"
+panels are all 2s. A stub is a fail, not a partial credit.
+
+## 2. Functionality — does it work end to end for a real user
+
+Includes edge paths and error paths, not only the happy path. Where product depth
+asks *is the verb there*, functionality asks *does it behave correctly*.
 
 - **0** — Does not start, or the primary surface does not render.
-- **1** — Renders, but the sprint's main flow cannot be completed at all.
+- **1** — Renders, but the main flow cannot be completed at all.
 - **2** — Main flow completes only along one narrow path; common variations break.
 - **3** — Main flow works. At least one edge or error path is broken or missing
-  (empty state, invalid input, refresh, back navigation, boundary value).
-- **4** — Every acceptance criterion passes, including edge and error paths.
-  Remaining defects are cosmetic and do not block a user.
-- **5** — As 4, plus the app behaves correctly under conditions the contract did not
-  name: rapid repeated actions, refresh mid-flow, two tabs, resize during use.
+  (empty state, invalid input, refresh, back navigation, boundary value), **or** a
+  write appears to succeed in the UI but is not persisted.
+- **4** — Every acceptance criterion passes, including edge and error paths, and
+  every write survives a reload. Remaining defects are cosmetic.
+- **5** — As 4, plus correct behaviour under conditions nobody specified: rapid
+  repeated actions, refresh mid-flow, two tabs, resize during use, concurrent edits.
 
 A partially working feature scores at most 3. "Works if you do it in the right
 order" is 2.
 
-## 2. Design quality — coherent visual identity
+## 3. Design quality — coherent visual identity
+
+*"Does the design feel like a coherent whole rather than a collection of parts?"*
 
 - **0** — Unstyled browser defaults.
 - **1** — Styling applied but incoherent: colliding colors, arbitrary spacing, no
@@ -54,62 +112,134 @@ order" is 2.
   different on different screens.
 - **3** — Consistent spacing scale, type scale, and color system. Nothing jars. The
   identity is generic but coherent.
-- **4** — As 3, plus deliberate hierarchy: the eye lands where it should, density
-  and contrast are used on purpose, the palette has an intent.
+- **4** — As 3, plus deliberate hierarchy: colors, typography, layout and imagery
+  combine into a distinct mood. Density and contrast are used on purpose.
 - **5** — As 4, and the visual system extends correctly to states it was not
   obviously designed for — errors, empty states, dense data, long strings.
 
-## 3. Originality — deliberate decisions vs. framework defaults
+## 4. Originality — deliberate decisions vs. defaults
 
-This grades *evidence of a decision*, not novelty for its own sake. A well-argued
-conventional choice is not a 1; an unexamined default is.
+*"Is there evidence of custom decisions, or is this template layouts, library
+defaults, and AI-generated patterns? A human designer should recognize deliberate
+creative choices."*
 
 - **0** — Untouched starter template.
 - **1** — Component library defaults throughout, default palette, default layout.
   Nothing indicates a choice was made.
-- **2** — Colors and copy changed; structure and interaction are still stock
-  centered-card-on-gradient or stock dashboard shell.
+- **2** — Colors and copy changed; structure and interaction are still stock. The
+  tells: purple or violet gradients over white cards, centered hero on a dark
+  radial background, three-column feature grid, stock dashboard shell.
 - **3** — At least one substantive layout or interaction decision fits *this*
-  product rather than any product — how the primary object is represented, how the
-  main action is reached.
+  product rather than any product.
 - **4** — The interface's shape follows from the domain. Several decisions
   (navigation model, primary surface, information density) are specific to it.
 - **5** — As 4, with a distinctive point of view carried consistently, including in
   micro-interactions and transitions.
 
-Scoring note: a polished template is a 1–2 on this dimension even when it scores 4
-on Design quality. That gap is the point of having both.
+A polished template is a 1–2 here even when it scores 4 on Design quality. That gap
+is the reason both dimensions exist.
 
-## 4. Craft — typography, alignment, states, responsiveness, a11y basics
+## 5. Craft — technical execution
+
+Typography hierarchy, spacing consistency, color harmony, contrast ratios, states,
+responsiveness, accessibility basics. A competence check, not a creativity check.
 
 - **0** — Overlapping or misaligned elements; unreadable text.
 - **1** — Visible alignment and rhythm errors; no interactive states at all.
 - **2** — Hover exists; focus, disabled, empty, and loading states are missing or
   wrong. Layout breaks at common widths.
 - **3** — Hover/focus/disabled present, empty and loading states exist, layout holds
-  from 375px to desktop, text is readable, no obviously broken tab order.
+  from 375px to desktop, text is readable, tab order follows visual order.
 - **4** — As 3, plus keyboard operability of the main flow, visible focus rings,
   labelled controls, sufficient contrast, and no layout shift on load.
 - **5** — As 4, with considered transitions, correct reduced-motion handling, and
   clean behaviour at extreme content lengths.
 
-Check craft in the browser: tab through the flow, hover, disable-trigger, resize to
-375px, and load with an empty data set. Craft asserted from reading CSS is
+Check craft in the browser: tab through the flow, hover, trigger disabled, resize to
+375px, load with an empty data set. Craft asserted from reading CSS is
 `not_verified`.
+
+## 6. Code quality — the one dimension you grade by reading
+
+Everywhere else in this harness, reading the code is not verification. Here it is
+the method. Read the diff for the sprint, or the whole tree at final QA.
+
+- **0** — Does not build, or the source is generated noise.
+- **1** — Works by accident: duplicated logic in several places, no separation
+  between transport, domain and view, errors swallowed silently.
+- **2** — Recognisable structure, but significant duplication, dead code left in,
+  or error paths that log nothing and surface nothing.
+- **3** — Coherent module boundaries, no large-scale duplication, errors handled
+  explicitly with a user-facing message and a loggable detail, no dead code, and
+  tests exist for the non-trivial logic.
+- **4** — As 3, plus the abstractions match the domain rather than the framework,
+  naming is consistent, and the tests would actually fail if the behaviour broke.
+- **5** — As 4, and a new contributor could locate any feature from the structure
+  alone.
+
+Do not grade style preferences a formatter would settle. Do not demand abstraction
+the size of the codebase does not justify — speculative generality is a defect here,
+not a virtue.
 
 ## Blocking vs. non-blocking
 
 **Blocking** — any of: an acceptance criterion marked `fail`; any dimension below
-its threshold; a console error thrown during a contract flow; data loss; a
-navigation dead-end. Blocking issues are the *only* thing the generator revises
-against.
+its threshold; a console error thrown during a graded flow; a write that does not
+persist; data loss; a navigation dead-end. Blocking issues are the *only* thing the
+generator revises against.
 
 **Non-blocking** — real but not gating: cosmetic misalignment, a nice-to-have state,
-a slow-but-working path. Record them; they are inputs to a later sprint, not this
-revision.
+a slow-but-working path. Record them; they are inputs to a later sprint.
 
-Every issue, blocking or not, needs: reproduction steps, observed behaviour,
-expected behaviour, and a screenshot path.
+Every issue needs: reproduction steps, observed behaviour, expected behaviour, a
+screenshot path, **and a cause** — see below.
+
+## Every failure must carry a diagnosis
+
+Observing the failure is what makes it real. Locating it is what makes the report
+useful. Do both, in that order, and never substitute the second for the first.
+
+After you have reproduced a failure in the browser (or against the API), read the
+code and find the mechanism. Report it as `cause`: the file, the line, and the
+specific reason, at this level of precision:
+
+> **FAIL** — Rectangle fill tool only places tiles at the drag start and end points
+> instead of filling the region. `fillRectangle` exists but is not triggered on
+> `mouseUp`.
+
+> **FAIL** — Delete key handler at `LevelEditor.tsx:892` requires both `selection`
+> and `selectedEntityId` to be set, but clicking an entity only sets
+> `selectedEntityId`.
+
+> **FAIL** — `PUT /frames/reorder` is declared after the `/{frame_id}` routes.
+> FastAPI matches `reorder` as an integer `frame_id` and returns 422.
+
+If you genuinely cannot locate the cause after a reasonable search, say so in
+`cause` explicitly ("not located; searched X and Y"). An empty `cause` field on a
+blocking issue is an incomplete verdict, not a neutral one.
+
+The one thing this must never become: concluding from the code that a feature works.
+That direction is banned. Code reading explains an observed failure; it never
+establishes a pass.
+
+## Beyond the browser: API and persistence
+
+A criterion is not verified until the data behind it is verified. For any flow that
+writes:
+
+1. Perform the write through the UI.
+2. **Reload the page** and confirm it is still there.
+3. Confirm it independently of the UI — hit the API endpoint with `curl`, or read
+   the database (`sqlite3 <file> "select …"`, `psql -c`). The UI showing the value
+   after a reload can still be a cache or local state.
+
+Also exercise the API directly where the spec implies it: wrong method, missing
+required field, unknown id, and a payload that violates a stated constraint. An API
+that returns 200 for an invalid write is a blocking issue even when the UI never
+sends one.
+
+Read `.harness/config.json` for `urls.api` and the database location. If there is no
+backend, say so in `qa.md` and skip this section rather than inventing one.
 
 ## `verdict.json`
 
@@ -118,26 +248,33 @@ JSON Schema (draft 2020-12):
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "harness sprint verdict",
+  "title": "harness verdict",
   "type": "object",
-  "required": ["schemaVersion", "sprint", "overall", "scores", "criteria", "blockingIssues", "nonBlockingIssues", "environment", "evaluatedAt"],
+  "required": ["schemaVersion", "phase", "round", "overall", "scores", "weightedScore", "criteria", "blockingIssues", "nonBlockingIssues", "environment", "evaluatedAt"],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "sprint": { "type": "integer", "minimum": 1 },
-    "revision": { "type": "integer", "minimum": 0 },
+    "schemaVersion": { "const": 2 },
+    "phase": { "enum": ["sprint", "final"] },
+    "sprint": { "type": ["integer", "null"], "minimum": 1, "description": "null when phase is final" },
+    "round": { "type": "integer", "minimum": 0, "description": "revision number for a sprint, QA round for a final assessment" },
     "overall": { "enum": ["pass", "fail"] },
     "scores": {
       "type": "object",
-      "required": ["functionality", "design", "originality", "craft"],
+      "required": ["productDepth", "functionality", "design", "originality", "craft", "codeQuality"],
       "additionalProperties": false,
       "description": "null means the dimension could not be assessed (degraded mode); null never satisfies a threshold",
       "properties": {
+        "productDepth": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 },
         "functionality": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 },
         "design": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 },
         "originality": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 },
-        "craft": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 }
+        "craft": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 },
+        "codeQuality": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 }
       }
+    },
+    "weightedScore": {
+      "type": ["number", "null"],
+      "description": "weighted mean using productDepth/design/originality=3, functionality=2, craft/codeQuality=1. Reported for trend, never a gate. null if any score is null."
     },
     "criteria": {
       "type": "array",
@@ -146,10 +283,10 @@ JSON Schema (draft 2020-12):
         "required": ["id", "text", "result"],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "pattern": "^AC-[0-9]+$" },
+          "id": { "type": "string", "pattern": "^(AC|SPEC)-[0-9]+$" },
           "text": { "type": "string" },
           "result": { "enum": ["pass", "fail", "not_verified"] },
-          "evidence": { "type": "string", "description": "what was actually done in the browser and what was observed" },
+          "evidence": { "type": "string", "description": "what was actually done and what was observed" },
           "reason": { "type": "string", "description": "required when result is not_verified" },
           "screenshot": { "type": ["string", "null"] }
         }
@@ -166,7 +303,9 @@ JSON Schema (draft 2020-12):
         "degraded": { "type": "boolean" },
         "degradedReason": { "type": ["string", "null"] },
         "appUrl": { "type": ["string", "null"] },
-        "apiUrl": { "type": ["string", "null"] }
+        "apiUrl": { "type": ["string", "null"] },
+        "apiVerified": { "type": "boolean", "description": "true if endpoints were exercised outside the browser" },
+        "persistenceVerified": { "type": "boolean", "description": "true if a write was confirmed in the datastore or via the API after a reload" }
       }
     },
     "evaluatedAt": { "type": "string", "format": "date-time" }
@@ -177,15 +316,27 @@ JSON Schema (draft 2020-12):
       "description": "ordered, most severe first",
       "items": {
         "type": "object",
-        "required": ["id", "summary", "repro", "observed", "expected"],
+        "required": ["id", "summary", "repro", "observed", "expected", "cause"],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "description": "stable across revisions; reuse the id when the same issue recurs" },
+          "id": { "type": "string", "description": "stable across rounds; reuse the id when the same defect recurs" },
           "criterionId": { "type": ["string", "null"] },
+          "dimension": { "enum": ["productDepth", "functionality", "design", "originality", "craft", "codeQuality", null] },
           "summary": { "type": "string" },
           "repro": { "type": "array", "items": { "type": "string" } },
           "observed": { "type": "string" },
           "expected": { "type": "string" },
+          "cause": {
+            "type": "object",
+            "required": ["mechanism"],
+            "additionalProperties": false,
+            "description": "found by reading the code AFTER observing the failure",
+            "properties": {
+              "file": { "type": ["string", "null"] },
+              "line": { "type": ["integer", "null"] },
+              "mechanism": { "type": "string", "description": "why it fails, or 'not located; searched …'" }
+            }
+          },
           "screenshot": { "type": ["string", "null"] },
           "severity": { "enum": ["blocking", "non-blocking"] }
         }
@@ -195,9 +346,8 @@ JSON Schema (draft 2020-12):
 }
 ```
 
-Issue ids are stable across revisions. Reusing the id when the same defect survives
-a revision is what lets the loop detect "same issue failing twice with no progress"
-and escalate instead of grinding.
+Issue ids are stable across rounds. Reusing the id when the same defect survives a
+revision is what lets the loop notice no progress and escalate instead of grinding.
 
 ## Degraded mode
 
@@ -205,11 +355,11 @@ If Playwright MCP is unreachable, do not silently fall back to reading code. Set
 `environment.playwrightAvailable: false`, `degraded: true`, and a `degradedReason`.
 Mark every criterion that requires rendering, interaction, or visual judgement as
 `not_verified` with that reason, set the scores you could not assess to `null`, and
-add a blocking issue stating what the harness could not verify. A degraded run never
+add a blocking issue stating what could not be verified. A degraded run never
 produces `overall: "pass"` — `null` does not satisfy a threshold.
 
-The reduced check you *can* still do, clearly labelled as such in `qa.md`: does the
-build succeed, does the dev server start, does the app respond at its URL, do the
-project's own tests pass. Report those results and nothing more. Reading the source
-and concluding a feature works is not a reduced check; it is the failure this
-harness exists to prevent.
+The reduced check you *can* still do, clearly labelled as such at the top of
+`qa.md`: does the build succeed, does the dev server start, does the app respond,
+do the project's tests pass, do the API endpoints behave when driven with `curl`,
+and does the datastore contain what a write should have produced. Code quality is
+still gradeable. Report those and nothing more.
