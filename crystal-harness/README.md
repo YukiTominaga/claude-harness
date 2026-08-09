@@ -55,13 +55,13 @@ ownership hook).
 ```bash
 claude plugin marketplace update crystal-harness-local
 claude plugin update crystal-harness@crystal-harness-local
-claude plugin enable crystal-harness          # <- do not skip this
+claude plugin list --json | grep -A1 crystal-harness   # confirm "enabled": true
 ```
 
-Observed on Claude Code 2.1.226: `plugin update` installs the new version and leaves
-it **disabled**. The symptom is that every `/crystal-harness:*` command comes back
-`Unknown command` in the next session while `plugin list --json` shows the new version
-with `"enabled": false`. Re-enable, then restart.
+`plugin update` has been seen once (Claude Code 2.1.226) to install the new version
+and leave it **disabled**. The symptom is every `/crystal-harness:*` command coming
+back `Unknown command` in the next session. If `enabled` is false, run
+`claude plugin enable crystal-harness`. Then restart.
 
 ## Quickstart
 

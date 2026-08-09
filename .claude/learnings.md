@@ -1,12 +1,13 @@
 # Learnings
 
-## 2026-08-09: `claude plugin update` leaves the plugin disabled
-Updating a locally-installed plugin (`claude plugin update <name>@<marketplace>`)
-installs the new version but flips `enabled` to `false`. Symptom: every slash command
-returns `Unknown command` in the next session, and `claude plugin list --json` shows
-the new version with `"enabled": false`. Fix: `claude plugin enable <name>`.
-Cost us a full background QA run that failed instantly with no useful error.
-Observed on Claude Code 2.1.226.
+## 2026-08-09: `claude plugin update` can leave the plugin disabled
+Seen once on Claude Code 2.1.226: updating a locally-installed plugin (0.1.1 → 0.2.0)
+installed the new version but flipped `enabled` to `false`. Symptom: every slash
+command returns `Unknown command` in the next session, with no other error — cost a
+full background QA run before we checked. **Not reproducible** — the next update
+(0.2.0 → 0.3.0) kept it enabled. Treat it as a state to verify, not a rule: after
+`plugin update`, check `claude plugin list --json` for `"enabled": true` and run
+`claude plugin enable <name>` only if it is false.
 
 ## 2026-08-09: the plugin cache is a snapshot, not a symlink
 `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` is a copy taken at install
