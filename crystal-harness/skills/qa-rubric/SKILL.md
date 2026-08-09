@@ -28,28 +28,25 @@ QA fails is a normal and expected outcome, not a contradiction.
 
 ## Thresholds
 
-| Dimension | Threshold | |
-| --- | --- | --- |
-| Product depth | **≥ 4** | weight 3 |
-| Design quality | **≥ 4** | weight 3 |
-| Originality | **≥ 4** | weight 3 |
-| Functionality | **≥ 4** | weight 2 |
-| Craft | ≥ 3 | weight 1 |
-| Code quality | ≥ 3 | weight 1 |
+| Dimension | Threshold |
+| --- | --- |
+| Product depth | **≥ 4** |
+| Design quality | **≥ 4** |
+| Originality | **≥ 4** |
+| Functionality | **≥ 4** |
+| Craft | ≥ 3 |
+| Code quality | ≥ 3 |
 
 `overall: "pass"` requires **every** threshold met, **and** zero blocking issues,
 **and** zero acceptance criteria marked `fail`. Any one dimension below its
 threshold fails the sprint or the run.
 
-The emphasis on product depth, design quality and originality is expressed by their
-thresholds sitting at 4 while craft and code quality sit at 3 — a product that is
-merely tidy and merely working does not pass. Functionality also sits at 4: a
-full-stack app that does not work is not gradeable on anything else.
-
-Also report `weightedScore` — the weighted mean of the six scores using the weights
-above. It is **not** a gate. It exists so a human can see whether rounds are
-improving, plateauing, or regressing, which is the signal for whether another round
-is worth its cost.
+**The thresholds are the weighting.** Product depth, design quality and originality
+sit at 4 while craft and code quality sit at 3 — a product that is merely tidy and
+merely working does not pass. Functionality also sits at 4: a full-stack app that
+does not work is not gradeable on anything else. There is no separate weighted
+score; the six scores per round are the trend a human reads to decide whether
+another round is worth its cost.
 
 A criterion marked `not_verified` never counts toward a pass. If enough criteria are
 `not_verified` that you cannot tell whether the work is sound, the verdict is `fail`
@@ -250,7 +247,7 @@ JSON Schema (draft 2020-12):
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "harness verdict",
   "type": "object",
-  "required": ["schemaVersion", "phase", "round", "overall", "scores", "weightedScore", "criteria", "blockingIssues", "nonBlockingIssues", "environment", "evaluatedAt"],
+  "required": ["schemaVersion", "phase", "round", "overall", "scores", "criteria", "blockingIssues", "nonBlockingIssues", "environment", "evaluatedAt"],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "const": 2 },
@@ -272,10 +269,6 @@ JSON Schema (draft 2020-12):
         "codeQuality": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 }
       }
     },
-    "weightedScore": {
-      "type": ["number", "null"],
-      "description": "weighted mean using productDepth/design/originality=3, functionality=2, craft/codeQuality=1. Reported for trend, never a gate. null if any score is null."
-    },
     "criteria": {
       "type": "array",
       "items": {
@@ -286,8 +279,7 @@ JSON Schema (draft 2020-12):
           "id": { "type": "string", "pattern": "^(AC|SPEC)-[0-9]+$" },
           "text": { "type": "string" },
           "result": { "enum": ["pass", "fail", "not_verified"] },
-          "evidence": { "type": "string", "description": "what was actually done and what was observed" },
-          "reason": { "type": "string", "description": "required when result is not_verified" },
+          "evidence": { "type": "string", "description": "what was actually done and what was observed; for not_verified, why it could not be checked" },
           "screenshot": { "type": ["string", "null"] }
         }
       }
@@ -337,8 +329,7 @@ JSON Schema (draft 2020-12):
               "mechanism": { "type": "string", "description": "why it fails, or 'not located; searched …'" }
             }
           },
-          "screenshot": { "type": ["string", "null"] },
-          "severity": { "enum": ["blocking", "non-blocking"] }
+          "screenshot": { "type": ["string", "null"] }
         }
       }
     }

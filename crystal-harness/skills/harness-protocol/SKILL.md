@@ -70,7 +70,7 @@ JSON Schema (draft 2020-12):
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "harness state",
   "type": "object",
-  "required": ["schemaVersion", "phase", "currentSprint", "sprints", "finalRounds", "consecutiveFailures", "lastGoodCommit", "ledger", "updatedAt"],
+  "required": ["schemaVersion", "phase", "currentSprint", "sprints", "finalRounds", "lastGoodCommit", "ledger", "updatedAt"],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "const": 2 },
@@ -90,52 +90,16 @@ JSON Schema (draft 2020-12):
           "status": { "enum": ["contracting", "contracted", "building", "qa", "revising", "passed", "failed", "abandoned"] },
           "revisions": { "type": "integer", "minimum": 0 },
           "contractRounds": { "type": "integer", "minimum": 0 },
-          "verdicts": {
-            "type": "array",
-            "description": "one entry per QA round, oldest first — the trend a human needs to decide whether another round is worth it",
-            "items": {
-              "type": "object",
-              "required": ["round", "overall"],
-              "additionalProperties": false,
-              "properties": {
-                "round": { "type": "integer", "minimum": 0 },
-                "overall": { "enum": ["pass", "fail"] },
-                "weightedScore": { "type": ["number", "null"] },
-                "blockingCount": { "type": "integer", "minimum": 0 }
-              }
-            }
-          },
+          "verdicts": { "$ref": "#/$defs/verdictSummaries" },
           "commit": { "type": ["string", "null"] }
         }
       }
     },
-    "finalRounds": {
-      "type": "array",
-      "description": "end-of-run assessment rounds; same shape as a sprint's verdicts",
-      "items": {
-        "type": "object",
-        "required": ["round", "status"],
-        "additionalProperties": false,
-        "properties": {
-          "round": { "type": "integer", "minimum": 1 },
-          "status": { "enum": ["building", "qa", "passed", "failed"] },
-          "overall": { "enum": ["pass", "fail", null] },
-          "weightedScore": { "type": ["number", "null"] },
-          "blockingCount": { "type": ["integer", "null"], "minimum": 0 },
-          "commit": { "type": ["string", "null"] }
-        }
-      }
-    },
-    "consecutiveFailures": { "type": "integer", "minimum": 0 },
+    "finalRounds": { "$ref": "#/$defs/verdictSummaries" },
     "repeatedIssueFingerprints": {
       "type": "object",
       "description": "blocking-issue id -> number of consecutive verdicts it has appeared in",
       "additionalProperties": { "type": "integer", "minimum": 1 }
-    },
-    "approachChanges": {
-      "type": "object",
-      "description": "blocking-issue id -> number of times the generator reported a materially different approach for it. Distinguishes 'stuck' from 'still trying something new'.",
-      "additionalProperties": { "type": "integer", "minimum": 0 }
     },
     "ledger": { "$ref": "#/$defs/ledger" },
     "lastGoodCommit": { "type": ["string", "null"] },
@@ -143,6 +107,22 @@ JSON Schema (draft 2020-12):
     "updatedAt": { "type": "string", "format": "date-time" }
   },
   "$defs": {
+    "verdictSummaries": {
+      "type": "array",
+      "description": "one entry per QA round, oldest first. Used by sprints[].verdicts and by finalRounds — the six scores across rounds are the trend a human reads to decide whether another round is worth its cost.",
+      "items": {
+        "type": "object",
+        "required": ["round", "overall"],
+        "additionalProperties": false,
+        "properties": {
+          "round": { "type": "integer", "minimum": 0 },
+          "overall": { "enum": ["pass", "fail", null], "description": "null while the round is still building or in QA" },
+          "scores": { "type": ["object", "null"], "description": "the six dimension scores from that round's verdict.json" },
+          "blockingCount": { "type": ["integer", "null"], "minimum": 0 },
+          "commit": { "type": ["string", "null"] }
+        }
+      }
+    },
     "ledger": {
       "type": "array",
       "description": "append-only, one entry per subagent invocation. This is the evidence for whether a component is still worth its cost.",

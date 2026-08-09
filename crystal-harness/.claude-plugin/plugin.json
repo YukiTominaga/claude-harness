@@ -3,7 +3,7 @@
   "name": "crystal-harness",
   "displayName": "Crystal Harness",
   "description": "Multi-agent harness for long-running application development: separated generation and evaluation, operationalized QA rubric, context reset via file handoffs, and sprint contracts.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "tominaga",
     "email": "tominaga@utaha.io"

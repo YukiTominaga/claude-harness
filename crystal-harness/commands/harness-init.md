@@ -43,7 +43,6 @@ Only fall back to these greenfield defaults when the directory has no project in
 
 ```json
 {
-  "stack": { "frontend": "react-vite-ts", "backend": "fastapi", "database": "sqlite" },
   "commands": {
     "install": "npm install",
     "dev": "npm run dev",
@@ -73,13 +72,12 @@ The `harness` block, with these defaults, is part of what you show:
 ```json
 {
   "harness": {
-    "usePlanner": true,
     "useEvaluator": true,
     "useSprints": true,
+    "contextReset": true,
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxFinalQaRounds": 3,
-    "contextResetPolicy": "per-sprint",
     "costPerMTokUsd": null
   }
 }
@@ -96,10 +94,9 @@ After confirmation, create:
 
 - `.harness/config.json` — as confirmed.
 - `.harness/state.json` — `schemaVersion: 2`, `phase: "init"`, `currentSprint: null`,
-  `sprints: []`, `finalRounds: []`, `consecutiveFailures: 0`,
-  `repeatedIssueFingerprints: {}`, `approachChanges: {}`, `ledger: []`,
+  `sprints: []`, `finalRounds: []`, `repeatedIssueFingerprints: {}`, `ledger: []`,
   `lastGoodCommit` set to `git rev-parse HEAD` if the repo has a commit, else `null`.
-- `.harness/journal.md` — one entry recording initialization and the detected stack.
+- `.harness/journal.md` — one entry recording initialization and what was detected.
 - `.harness/handoff.md` — using the template in `harness-protocol`, with
   "Next action" = run `/crystal-harness:harness-plan <idea>`.
 - `.harness/sprints/`, `.harness/final/`, `.harness/artifacts/` — empty directories

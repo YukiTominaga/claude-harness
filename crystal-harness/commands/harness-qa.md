@@ -26,7 +26,7 @@ Target, from `$1`:
 3. Spawn a **fresh `harness-evaluator`** with the file paths and the target
    directory. Give it no summary of what the code does.
 4. Read the returned `verdict.json`, validate it against the `qa-rubric` schema — six
-   scores, `weightedScore`, a `cause` on every blocking issue — append a journal
+   scores and a `cause` on every blocking issue — append a journal
    entry, append the round to `state.json` (`sprints[].verdicts` or `finalRounds`),
    and **append a `ledger` entry** with the evaluator's `duration_ms` and
    `subagent_tokens` from the Agent result.
@@ -40,8 +40,8 @@ output. Do not debug the application.
 
 ## Report
 
-Overall verdict; the six scores against their thresholds plus the weighted score
-compared to the previous round; the pass / fail / not_verified counts; whether the API
+Overall verdict; the six scores against their thresholds, with the previous round's
+for comparison; the pass / fail / not_verified counts; whether the API
 and persistence were verified outside the browser; and every blocking issue with its
 reproduction steps, cause, and screenshot path. If the evaluator ran degraded, say so
 first, before anything else.

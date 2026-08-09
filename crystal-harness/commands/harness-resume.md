@@ -53,8 +53,8 @@ Print a reconstruction summary and stop for confirmation:
 - the handoff's "Current goal", "In progress", "Known broken", "Approaches already
   tried and rejected", and "Next action"
 - revision count against `maxRevisionsPerSprint`, and any issue id at ≥ 2 recurrences
-  together with its `approachChanges` count
-- the `weightedScore` trend across rounds, and the ledger totals so far
+- the six scores per round across this sprint or final sequence, and the ledger
+  totals so far
 - `lastGoodCommit` and whether the working tree is clean
 
 Ask: continue from "Next action", or roll back to `lastGoodCommit` first?

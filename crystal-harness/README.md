@@ -174,11 +174,6 @@ missing interpreter into a loud block; the policy is in
 
 ```jsonc
 {
-  "stack": {
-    "frontend": "react-vite-ts",
-    "backend": "fastapi",
-    "database": "sqlite"              // or "postgres"
-  },
   "commands": {
     "install": "npm install",
     "dev": "npm run dev",
@@ -196,13 +191,12 @@ missing interpreter into a loud block; the policy is in
     "url": null
   },
   "harness": {
-    "usePlanner": true,
     "useEvaluator": true,
     "useSprints": true,               // false → one long coherent session (v2 mode)
+    "contextReset": true,             // false → keep one agent across phases
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxFinalQaRounds": 3,
-    "contextResetPolicy": "per-sprint", // "per-sprint" | "per-phase" | "never"
     "costPerMTokUsd": null            // set to show estimated $ in harness-status
   }
 }
@@ -220,6 +214,22 @@ everything that writes.
 
 Every `harness.*` flag can be turned off independently. That is deliberate; see
 "What to strip".
+
+### Which model each agent runs
+
+Set in the agent frontmatter, not in `config.json` — this is the first thing to
+revisit when a new model lands:
+
+| Agent | Model | Effort | Why |
+| --- | --- | --- | --- |
+| `harness-planner` | `claude-sonnet-5` | `high` | Structured expansion of an idea into a spec |
+| `harness-generator` | `claude-opus-5` | `xhigh` | Long-horizon coherence and hard implementation |
+| `harness-evaluator` | `claude-opus-5` | `high` | Design and depth judgement, not just criterion matching |
+
+**Effort is the cost lever, not model tier.** Sonnet 5 is ~40% cheaper than Opus 5
+per token (~60% at the introductory rate through 2026-08-31), while dropping the
+generator from `xhigh` to `medium` moves far more. Sweep effort against your own
+output before reaching for a cheaper model.
 
 ## How the loop works
 
@@ -264,19 +274,18 @@ rounds of QA and fixes to completion.
 
 Six dimensions, each 0–5 with written behavioral anchors:
 
-| Dimension | Threshold | Weight | |
-| --- | --- | --- | --- |
-| **Product depth** | ≥ 4 | 3 | is the feature real, or a facade |
-| **Design quality** | ≥ 4 | 3 | coherent whole, distinct mood and identity |
-| **Originality** | ≥ 4 | 3 | deliberate decisions, not library defaults |
-| **Functionality** | ≥ 4 | 2 | works end to end, including edge and error paths |
-| **Craft** | ≥ 3 | 1 | typography, spacing, states, contrast, responsiveness |
-| **Code quality** | ≥ 3 | 1 | boundaries, duplication, error handling, real tests |
+| Dimension | Threshold | |
+| --- | --- | --- |
+| **Product depth** | ≥ 4 | is the feature real, or a facade |
+| **Design quality** | ≥ 4 | coherent whole, distinct mood and identity |
+| **Originality** | ≥ 4 | deliberate decisions, not library defaults |
+| **Functionality** | ≥ 4 | works end to end, including edge and error paths |
+| **Craft** | ≥ 3 | typography, spacing, states, contrast, responsiveness |
+| **Code quality** | ≥ 3 | boundaries, duplication, error handling, real tests |
 
-**Any one dimension below its threshold fails the sprint or the run.** The emphasis on
-depth, design and originality is expressed by their thresholds sitting at 4 while
-craft and code quality sit at 3. `weightedScore` is reported per round as a trend
-signal — it is not a gate.
+**Any one dimension below its threshold fails the sprint or the run, and the
+thresholds are the weighting** — depth, design and originality sit at 4 while craft
+and code quality sit at 3. There is no separate weighted score to compute or store.
 
 A criterion that was not exercised is `not_verified`, never `pass`, and
 `not_verified` never counts toward a pass. Every blocking issue carries reproduction
@@ -320,7 +329,7 @@ those assumptions expire. In the source post's own v2, the sprint construct beca
 unnecessary once the model could sustain 2+ hour coherent sessions.
 
 **Use the ledger, not your impression.** `/harness-status` gives you tokens, wall time
-and per-agent share; the `weightedScore` trend tells you whether rounds still buy
+and per-agent share; the per-round scores tell you whether rounds still buy
 anything. Remove one component at a time and compare the next run's final assessment
 against the last. Ranked from least to most load-bearing:
 
@@ -341,10 +350,11 @@ anything visual, interactive, or genuinely novel. Even then, consider keeping on
 final assessment and dropping per-sprint QA — that is the cheapest configuration that
 still has an independent grader.
 
-**3. The planner — `usePlanner: false`.** Load-bearing longer than the other two,
-because under-scoping is a failure of what the prompt asked for, not of model
-capability. *Signal:* you barely edit the spec, and a generator given the raw one-line
-idea produces the same feature list the planner would have.
+**3. The planner.** Load-bearing longer than the other two, because under-scoping is
+a failure of what the prompt asked for, not of model capability. There is no flag —
+stop running `/harness-plan` and write `spec.md` yourself. *Signal:* you barely edit
+the spec, and a generator given the raw one-line idea produces the same feature list
+the planner would have.
 
 **4. The final assessment — keep it longest.** It is the only check graded against
 criteria the generator never helped write. Its cost is one evaluator pass per run.

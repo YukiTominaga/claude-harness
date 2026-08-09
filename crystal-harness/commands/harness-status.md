@@ -1,5 +1,5 @@
 ---
-description: Print the current harness phase, sprint and final-round tables, score trends, the cost ledger, and open blocking issues.
+description: Print the current harness phase, sprint and final-round tables with score trends, the cost ledger, and open blocking issues.
 allowed-tools: Read, Glob, Grep, Bash
 ---
 
@@ -9,41 +9,35 @@ Read `.harness/state.json`, `.harness/config.json`, `.harness/handoff.md`, and e
 `verdict.json` under `.harness/sprints/` and `.harness/final/`. If `.harness/` does
 not exist, say so and point at `/crystal-harness:harness-init`.
 
-Print exactly this, in this order:
+Print exactly this, in this order.
 
 ## Run
 
-Phase, current sprint, `useSprints` / `useEvaluator` / `usePlanner` /
-`contextResetPolicy`, `lastGoodCommit` (with its subject from
-`git log -1 --format=%s`), and whether the working tree is clean.
+Phase, current sprint or final round, `useSprints` / `useEvaluator` / `contextReset`,
+`lastGoodCommit` (with its subject from `git log -1 --format=%s`), and whether the
+working tree is clean.
 
 If `phase` is `blocked`, print `blockedReason` in full, first, before anything else.
 
-## Sprints
+## Rounds
 
-| # | title | status | rev | verdict | PD | Fn | Ds | Or | Cr | CQ | wtd | commit |
+One table for sprints and one for final rounds, **one row per QA round** rather than
+per sprint — the scores across rounds are the trend, so they have to be visible side
+by side:
 
-One row per sprint, joined with its latest `verdict.json`. `-` for missing values.
-Mark any score below its threshold (PD/Fn/Ds/Or ≥ 4, Cr/CQ ≥ 3) so it is visible at a
-glance.
+| sprint/round | status | PD | Fn | Ds | Or | Cr | CQ | blocking | commit |
 
-## Final assessment
-
-| round | status | verdict | PD | Fn | Ds | Or | Cr | CQ | wtd | blocking |
+Mark any score below its threshold (PD/Fn/Ds/Or ≥ 4, Cr/CQ ≥ 3). Say in one line
+whether the sequence is improving, plateauing, or regressing — that is the signal for
+whether another round is worth its cost.
 
 If there are no final rounds yet, say so plainly: **the run is not finished until a
 final assessment passes**, and reaching the end of the feature ordering is not the
 same thing.
 
-## Score trend
-
-For the current sprint or final sequence, the `weightedScore` per round in order, so
-it is visible whether rounds are improving, plateauing, or regressing. Say which of
-the three it is; that is the signal for whether another round is worth its cost.
-
 ## Cost
 
-Aggregate `state.json`'s `ledger` and print:
+Aggregate `state.json`'s `ledger`:
 
 | agent | calls | tokens | wall time |
 | harness-planner | | | |
@@ -52,24 +46,21 @@ Aggregate `state.json`'s `ledger` and print:
 | **total** | | | |
 
 Then one line naming the evaluator's share of total tokens. If
-`harness.costPerMTokUsd` is set in `config.json`, add an estimated-USD column and
-label it estimated. If the ledger is empty, say so — the strip decisions in the README
-are not answerable without it.
-
-## Latest verdict
-
-Overall, criterion counts (pass / fail / not_verified), `environment.degraded`, and
-`apiVerified` / `persistenceVerified`. If degraded, say so prominently with the
-reason — a degraded verdict measured far less than it appears to. If either
-verification flag is false and the project has a backend, say that persistence was
-not independently confirmed.
+`harness.costPerMTokUsd` is set, add an estimated-USD column and label it estimated.
+If the ledger is empty, say so — the strip decisions in the README are not answerable
+without it.
 
 ## Open blocking issues
 
-Every issue in the latest verdict's `blockingIssues`, in order, with id, summary,
-`cause`, and screenshot path. Flag any id whose `repeatedIssueFingerprints` count is
-≥ 2, and say whether `approachChanges` for it is 0 — that pair is the condition that
-stops the loop.
+From the latest verdict: `overall`, the criterion counts (pass / fail /
+not_verified), and — if `environment.degraded` is true — say so prominently with the
+reason, because a degraded verdict measured far less than it appears to. If
+`apiVerified` or `persistenceVerified` is false and the project has a backend, say
+persistence was not independently confirmed.
+
+Then every issue in `blockingIssues`, in order, with id, summary, `cause`, and
+screenshot path. Flag any id whose `repeatedIssueFingerprints` count is ≥ 2 — one
+more recurrence stops the loop.
 
 ## Next action
 

@@ -25,10 +25,19 @@ stop until they answer. Do not clear it silently — the block exists because th
 decided it could not make progress on its own.
 
 If they say continue, record in `journal.md` that a human cleared the block and what
-they decided, set `phase` back to the value implied by the current state, reset
-`consecutiveFailures` to 0, clear `repeatedIssueFingerprints`, and proceed. A block
-that was `revisions exhausted` should normally be cleared only alongside a change the
-human made — say so if the working tree is unchanged since the block.
+they decided, set `phase` back to the value implied by the current state, clear
+`repeatedIssueFingerprints`, and proceed. A block that was `revisions exhausted`
+should normally be cleared only alongside a change the human made — say so if the
+working tree is unchanged since the block.
+
+## Spawn exactly one subagent at a time
+
+Each step below spawns one agent and waits for it. Never fan out: two generators on
+the same working tree collide, and a second evaluator grading the same round produces
+a verdict nobody asked for. Current models delegate readily and will suggest parallel
+work — the sequence here is the design, not a limitation to route around. The only
+concurrency in this harness is that a subagent may use its own tools in parallel
+internally.
 
 ## Record the ledger after every subagent call
 
@@ -105,8 +114,8 @@ Then spawn the evaluator as a **new subagent with no shared context**. Do not
 summarize the generator's session to it. Do not tell it what the generator claims
 works. It gets file paths and the running app; that is the entire point.
 
-If `contextResetPolicy` is `"never"`, skip only the fresh-agent part — still write
-the handoff. If `"per-phase"`, also reset between contract review and implementation.
+If `harness.contextReset` is `false`, skip only the fresh-agent part — the handoff is
+still written, because it is what makes the run resumable.
 
 ### 5. Evaluate
 
@@ -116,7 +125,7 @@ the API and datastore directly, locates the cause of each failure in the code, a
 writes `qa.md`, `verdict.json`, and screenshots.
 
 Read `verdict.json` yourself and validate it against the `qa-rubric` schema — six
-scores present, `weightedScore` computed, every blocking issue carrying a `cause`. If
+scores present, every blocking issue carrying a `cause`. If
 it does not conform, send it back once for correction; a malformed verdict must not be
 interpreted generously.
 
@@ -126,13 +135,12 @@ visible later.
 ### 6. Branch on the verdict
 
 **Pass** — commit the sprint artifacts, mark the sprint `passed`, record the commit,
-reset `consecutiveFailures` to 0, clear `repeatedIssueFingerprints` and
-`approachChanges`, write the handoff, journal it, and move to the next sprint.
+clear `repeatedIssueFingerprints`, write the handoff, journal it, and move to the
+next sprint.
 
 **Fail** — set `phase: "revising"`, increment the sprint's `revisions`. For each
 blocking issue id, increment `repeatedIssueFingerprints[id]`; drop ids that did not
-recur. Read the generator's last report and increment `approachChanges[id]` for each
-issue it explicitly recorded as an **approach change** rather than a patch.
+recur.
 
 Then spawn a **fresh `harness-generator`** with `verdict.json` and the instruction to
 work the **blocking issues only**. When an issue is at recurrence ≥ 2, instruct it
@@ -146,19 +154,16 @@ Stop, set `phase: "blocked"`, write `blockedReason`, journal it, and ask the hum
 whenever any of these holds:
 
 - `revisions` would exceed `maxRevisionsPerSprint`.
-- Any `repeatedIssueFingerprints[id] >= 3`.
-- Any `repeatedIssueFingerprints[id] >= 2` **and** `approachChanges[id] == 0` — the
-  same defect twice with no change of approach is stuck, and a third patch will not
-  clear it. If the generator *did* change approach, let it continue to the recurrence
-  limit above: the round that finally works is often the one that scrapped what came
-  before, and cutting that off at two is how a run stops just short.
+- Any `repeatedIssueFingerprints[id] >= 3` — three verdicts, same defect. Not two:
+  the round that finally clears a design or depth issue is often the one that scraps
+  the previous approach, and cutting that off at two is how a run stops just short.
 - The evaluator returns `degraded: true` twice in a row. The harness is not measuring
   anything; fix the environment before spending more rounds.
 - `maxSprints` reached — note this stops the sprint loop, and ask whether to run the
   final assessment on what exists.
 - The generator reports a blocking issue it could not reproduce twice in a row.
 
-When you escalate, print: the sprint, the verdict trend (`weightedScore` per round),
+When you escalate, print: the sprint, the six scores per round,
 the blocking issues in order with their repro steps and causes, what was tried across
 rounds, the ledger totals so far, and the specific decision you need. Do not propose
 to "try once more".
@@ -196,6 +201,6 @@ committed. A run that crashes must be resumable from those files alone.
 ## Report as you go
 
 After each sprint and each final round print a short block: the number, verdict, six
-scores plus the weighted score with the previous round's for comparison, blocking
+scores with the previous round's for comparison, blocking
 issue count, tokens and duration for that round, and what comes next. Do not
 editorialize about progress.

@@ -2,7 +2,8 @@
 name: harness-evaluator
 description: Grades a sprint or a whole build by driving the running application through a browser with Playwright, exercising its API and datastore directly, and reading the code to locate causes. Writes qa.md, verdict.json and screenshots; never edits source. Also reviews sprint contracts for testability. Use for contract-review, sprint QA, and the end-of-run final assessment.
 tools: Read, Grep, Glob, Write, Bash, Skill, mcp__plugin_crystal-harness_playwright
-model: inherit
+model: claude-opus-5
+effort: high
 color: red
 ---
 
@@ -179,9 +180,9 @@ speculative generality as a defect, not a virtue.
 
 ### 7. Score and write the verdict
 
-Score all six dimensions against the anchors, apply the thresholds, compute
-`weightedScore`, and run the five-question cross-dimension check at the end of
-`calibration-examples.md` before writing.
+Score all six dimensions against the anchors, apply the thresholds, and run the
+five-question cross-dimension check at the end of `calibration-examples.md` before
+writing.
 
 Write `verdict.json` conforming to the schema, and `qa.md`:
 
@@ -197,11 +198,12 @@ verified outside the browser>
 ## Scores
 | Dimension | Score | Threshold | Met |
 | --- | --- | --- | --- |
-<six rows, then the weighted score with the previous round's for comparison>
+<six rows, each with the previous round's score for comparison>
 
 ## Acceptance criteria
 | id | result | evidence |
-<one row per criterion; `not_verified` rows must carry a reason>
+<one row per criterion; a `not_verified` row's evidence says why it could not
+be checked>
 
 ## Blocking issues
 ### B-1 — <one-sentence summary at the specificity standard above>
@@ -223,7 +225,7 @@ lets the loop notice no progress and escalate instead of grinding.
 
 ## When you finish
 
-Report to the caller: the overall verdict, the six scores and the weighted score, the
+Report to the caller: the overall verdict, the six scores, the
 count of pass / fail / not_verified criteria, whether API and persistence were
 verified, and the blocking issue summaries in order with their causes. No commentary
 on the implementation.
