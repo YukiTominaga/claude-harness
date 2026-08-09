@@ -50,6 +50,19 @@ claude plugin details crystal-harness
 Requires `node`/`npx` (Playwright MCP is fetched on first use) and `python3` (the
 ownership hook).
 
+### Updating
+
+```bash
+claude plugin marketplace update crystal-harness-local
+claude plugin update crystal-harness@crystal-harness-local
+claude plugin enable crystal-harness          # <- do not skip this
+```
+
+Observed on Claude Code 2.1.226: `plugin update` installs the new version and leaves
+it **disabled**. The symptom is that every `/crystal-harness:*` command comes back
+`Unknown command` in the next session while `plugin list --json` shows the new version
+with `"enabled": false`. Re-enable, then restart.
+
 ## Quickstart
 
 ```
@@ -390,3 +403,19 @@ crystal-harness/
 ## License
 
 MIT.
+
+## Tests
+
+```bash
+python3 crystal-harness/scripts/test_guard.py
+```
+
+21 cases over the ownership guard: both denial policies, both escape routes
+(`..` traversal and a symlink planted inside `.harness/`), case-folding, the Bash
+path, every legitimate write, and both fail-closed paths. No framework and no
+dependencies.
+
+The guard is the only executable code in this plugin, and its failure mode is
+silent — if it stops denying, the harness keeps running and every verdict becomes
+self-awarded with no visible symptom. That is why it has a test and the prompts do
+not.
