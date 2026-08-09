@@ -30,8 +30,16 @@ claude
 Then, inside Claude Code:
 
 ```
-/plugin marketplace add /absolute/path/to/claude-harness/crystal-harness
-/plugin install crystal-harness@crystal-harness-local
+/plugin marketplace add YukiTominaga/claude-harness
+/plugin install crystal-harness@crystal-harness
+```
+
+For local development against an uncommitted checkout, add the marketplace from the local
+path instead:
+
+```
+/plugin marketplace add /absolute/path/to/claude-harness
+/plugin install crystal-harness@crystal-harness
 ```
 
 Restart Claude Code. Or, for a throwaway trial without installing:
@@ -53,8 +61,8 @@ ownership hook).
 ### Updating
 
 ```bash
-claude plugin marketplace update crystal-harness-local
-claude plugin update crystal-harness@crystal-harness-local
+claude plugin marketplace update crystal-harness
+claude plugin update crystal-harness@crystal-harness
 claude plugin list --json | grep -A1 crystal-harness   # confirm "enabled": true
 ```
 
@@ -429,8 +437,9 @@ memory, a grader that is not the author — should not.
 ## Layout
 
 ```
+../.claude-plugin/marketplace.json   # repo-root marketplace catalog, points here via "./crystal-harness"
 crystal-harness/
-├── .claude-plugin/{plugin.json, marketplace.json}
+├── .claude-plugin/plugin.json
 ├── agents/{harness-planner, harness-generator, harness-evaluator}.md
 ├── commands/harness-{init,plan,build,qa,resume,status}.md
 ├── skills/
