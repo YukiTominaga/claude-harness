@@ -29,6 +29,39 @@ inside a subagent. That makes per-role file-ownership policies enforceable in a 
 (e.g. "the generator may not write verdict.json, the evaluator may not write source"),
 which prompt instructions alone cannot guarantee.
 
+## 2026-08-09: a long headless harness run can hit the account's session usage limit
+A background `claude -p /crystal-harness:harness-build` invocation ended with only
+`You've hit your session limit · resets 5:30pm (Asia/Tokyo)` as output — not a
+harness stopping rule, not an error in journal.md, just the subprocess's underlying
+account hitting its usage cap mid-turn. The generator had already committed its
+fixes (git history was intact) but never got to write report.md or hand off to the
+evaluator; state.json/handoff.md were left exactly as the prior phase transition
+left them (stale, but not corrupted — no partial/garbled writes). This is a
+realistic risk for any harness run spanning multiple hours of Opus-5-at-xhigh
+subagent work: budget for it by checking wall-clock cost against known reset
+windows, and treat a bare rate-limit message with no journal entry as "safe to
+resume once the window resets" rather than a harness bug — `/harness-resume`'s
+consistency checks handle this fine since nothing was corrupted, only incomplete.
+
+## 2026-08-09: headless `claude -p` kills its own background children after 600s
+When an orchestrator running as `claude -p <command>` spawns a subagent that itself
+runs long (e.g. harness-evaluator started in the background from inside the
+orchestrator's own turn), and the orchestrator's top-level turn finishes and the
+process tries to exit while that child is still running, the Claude Code CLI waits
+600s then **terminates the still-running background child** and prints
+`Background tasks still running after 600s; terminating. Set
+CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.` The child leaves no
+error in `.harness/journal.md` — it just never writes its output (in this case,
+`final/02/qa.md` and `verdict.json` never appeared; only the directories the
+evaluator's early setup had created did). Any leftover dev servers the killed child
+started (uvicorn, vite) become orphaned processes holding the app's ports.
+Fix for headless/scripted harness invocations: set
+`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (or a value covering the expected run time)
+in the environment before invoking `claude -p` for any harness command that may
+spawn a long-running subagent from inside a `-p` session. Also: after a kill like
+this, check for and kill orphaned dev-server processes before resuming, or the
+retry's server start will collide on the port.
+
 ## 2026-08-09: subagents sometimes cannot Write a "report" file — has recurred twice
 Across two separate runs (a v1 sprint's report.md, and a v2 build's final/01/report.md),
 a harness-generator subagent's `Write` call for its own report file was rejected, with
