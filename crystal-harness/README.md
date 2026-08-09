@@ -116,9 +116,26 @@ Everything else passes through untouched. There is no logging hook and no format
 hook; neither prevents a named failure, and scaffolding that prevents nothing is the
 overhead this whole design argues against.
 
-The hook covers `Write`/`Edit`/`MultiEdit`/`NotebookEdit`. It does not intercept
-writes made through `Bash` — that is a real gap, and the reason the agent prompts
-state the rule as well as the hook enforcing it.
+How it behaves at the edges, and why:
+
+- **It fails closed.** If the event cannot be parsed, or `python3` is missing, the
+  guard exits 2 and the call is blocked with an explanation. A guard that waves
+  through what it could not inspect is worse than no guard, because the rest of the
+  design assumes it is holding.
+- **Paths are resolved with `realpath` and compared case-folded**, so neither
+  `.harness/../src/App.tsx`, nor a symlink planted inside `.harness/`, nor
+  `.HARNESS/sprints/01/VERDICT.JSON` on a case-insensitive filesystem gets past a
+  textual check.
+- **Bash coverage is deliberately asymmetric.** The generator is blocked from naming
+  a verdict artifact in a shell command at all — it has no legitimate reason to, and
+  the check has no false positives. The evaluator's Bash is *not* policed: it runs
+  the project's own install, build, test and dev commands, and any redirection
+  sniffer there would break more runs than it would catch. That residual gap is why
+  the agent prompts state the rule as well as the hook enforcing it.
+
+`scripts/guard-harness-artifacts.sh` is a thin wrapper whose only job is turning a
+missing interpreter into a loud block; the policy is in
+`scripts/guard_harness_artifacts.py`.
 
 ## Configuration reference
 
@@ -297,7 +314,7 @@ crystal-harness/
 │       ├── SKILL.md                     # dimensions, anchors, thresholds, verdict.json schema
 │       └── references/calibration-examples.md
 ├── hooks/hooks.json
-├── scripts/guard-harness-artifacts.sh
+├── scripts/{guard-harness-artifacts.sh, guard_harness_artifacts.py}
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
