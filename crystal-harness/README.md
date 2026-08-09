@@ -192,11 +192,11 @@ missing interpreter into a loud block; the policy is in
   },
   "harness": {
     "useEvaluator": true,
-    "useSprints": true,               // false → one long coherent session (v2 mode)
+    "useSprints": false,              // true → per-item contracts (v1 mode)
     "contextReset": true,             // false → keep one agent across phases
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
-    "maxFinalQaRounds": 3,
+    "maxFinalQaRounds": 5,
     "costPerMTokUsd": null            // set to show estimated $ in harness-status
   }
 }
@@ -207,6 +207,16 @@ from `package.json` scripts, the lockfile, framework configs, `pyproject.toml` a
 settings, then shows you each value annotated with where it came from. The defaults
 apply only to a greenfield directory. **It never invents a dev command** — ambiguous
 detection is a question, not a guess.
+
+`useSprints` defaults to `false` because the generator and evaluator are pinned to
+`claude-opus-5` (see below) regardless of this config — per-sprint decomposition
+was a safety net for models that lost coherence over long sessions, and Opus 5
+doesn't need it. Set it to `true` for a spec large or tightly-coupled enough that
+reviewing it in small, evaluated increments beats one long build plus a converging
+tail of final-QA rounds — there's no automatic signal for this, so ask if scope
+looks large. `maxFinalQaRounds` defaults to 5, not 3, for the same reason: with
+sprints off, defect-catching moves from many small per-sprint checks to fewer large
+end-of-run ones, so the round budget needs more room to converge.
 
 `database` matters more than it looks: the evaluator confirms every write by reading
 the datastore directly, so a run without it returns `persistenceVerified: false` on
@@ -233,7 +243,8 @@ output before reaching for a cheaper model.
 
 ## How the loop works
 
-Per sprint, with `useSprints: true`:
+Per sprint, with `useSprints: true` (the smaller-increments alternative to the
+default):
 
 1. **Contract.** A fresh generator cuts the next sprint from the spec's feature
    ordering and writes `contract.md`: scope, out-of-scope, **pinned interfaces** (the
@@ -259,16 +270,24 @@ Per sprint, with `useSprints: true`:
 6. **Branch.** Pass → commit, next sprint. Fail → a fresh generator revises against
    the **blocking issues only**.
 7. **Stop rather than loop.** The run halts and asks you when revisions are exhausted,
-   when an issue recurs three times, when it recurs twice *with no change of approach*,
-   when the evaluator runs degraded twice, or when `maxSprints` is reached.
+   when the same blocking issue recurs three times, when the evaluator runs degraded
+   twice, or when `maxSprints` is reached.
 8. **Final assessment.** When the feature ordering is exhausted, a fresh evaluator
    grades the whole product against `spec.md` with `SPEC-n` criteria it derives itself.
    Fail → a build round against the blocking issues, then re-assess. **The run is not
    done until this passes.**
 
-With `useSprints: false` (v2 mode) steps 1–2 and 6–7 disappear: the generator gets
-`spec.md` and runs one long coherent session, then the final assessment loop runs
-rounds of QA and fixes to completion.
+**With `useSprints: false` (the default)**, steps 1–2 and 6–7 disappear: a single
+fresh generator gets `spec.md` and builds the whole product in one long coherent
+session, then the final assessment loop (step 8) runs rounds of QA and fixes to
+completion or to `maxFinalQaRounds`. This is not hypothetical — a real run against a
+10-item spec built the full product in one 72-minute generator session, then took
+three final-QA rounds to reach a clean pass (round 1 found a real state-desync bug;
+its fix caused two smaller regressions round 2 caught; round 3 confirmed all three
+fixed with zero blocking issues, 39/39 criteria passing). Defect-catching that would
+have happened per-sprint under `useSprints: true` happens in this end-of-run
+convergence instead — which is why `maxFinalQaRounds` defaults higher (5) than a
+sprint-mode final assessment would need.
 
 ### The rubric
 
@@ -326,29 +345,39 @@ contains superseded decisions.
 
 Every component here encodes an assumption about what the model cannot do alone, and
 those assumptions expire. In the source post's own v2, the sprint construct became
-unnecessary once the model could sustain 2+ hour coherent sessions.
+unnecessary once the model could sustain 2+ hour coherent sessions — this plugin's
+generator and evaluator are pinned to `claude-opus-5`, a model in that class, so the
+default configuration already reflects that stripping. What follows is what's already
+stripped, what still isn't, and the evidence for each — not a to-do list.
 
 **Use the ledger, not your impression.** `/harness-status` gives you tokens, wall time
-and per-agent share; the per-round scores tell you whether rounds still buy
-anything. Remove one component at a time and compare the next run's final assessment
-against the last. Ranked from least to most load-bearing:
+and per-agent share; the per-round scores tell you whether rounds still buy anything.
+When a future model lands, remove one component at a time and compare the next run's
+final assessment against the last, the same way the change below was made.
 
-**1. Sprints — `useSprints: false`.** The weakest component and the first to go.
-Sprints exist to bound a session to what the model can hold coherently. *Signal:*
-contracts get accepted on the first round every time, sprint boundaries start looking
-arbitrary, and sprint N spends its first commits undoing a seam that only existed
-because sprint N-1 had to end somewhere. Then switch to v2 mode; the final assessment
-loop is unchanged.
+**1. Sprints — already off by default (`useSprints: false`).** Sprints exist to bound
+a session to what the model can hold coherently; Opus 5 doesn't need that bound. This
+isn't a guess: a real run against a 10-item spec built the whole product in one
+72-minute session and reached a clean final-QA pass in three rounds — cheaper and
+faster than the sprint-mode equivalent for the same spec (one sprint alone ran
+$20.13; the full v2 run, all 10 items to a pass, ran $44.18). Set `useSprints: true`
+when a spec is large or tightly-coupled enough that small, reviewed-as-you-go
+increments beat one long build plus a converging tail of final-QA rounds — there is
+no automatic signal for this, so ask the human if scope looks large. If you're
+evaluating a *newer* model than Opus 5 for the generator role, this is still the
+first thing to re-check, the same way it was checked here.
 
 **2. The evaluator on tasks the model already handles solo — `useEvaluator: false`.**
-The most expensive component: a second full agent, a browser, and a serialized round
-trip per round. **It is worth its cost only when the task sits beyond what the model
-does reliably alone.** *Signal:* the ledger shows the evaluator taking a large share
-while several consecutive verdicts come back `pass` with no blocking issues, and the
-non-blocking issues it does raise were already in the generator's report. Keep it for
-anything visual, interactive, or genuinely novel. Even then, consider keeping only the
-final assessment and dropping per-sprint QA — that is the cheapest configuration that
-still has an independent grader.
+Still on by default, and the evidence from the same run says it should stay on: the
+generator's own self-check pronounced its first fix correct, and only the evaluator
+caught that the fix had silently caused two new regressions. That is the exact
+failure this component exists to catch, and it fired on Opus 5, not just on older
+models. **It is worth its cost only when the task sits beyond what the model does
+reliably alone** — the same run showed that boundary hasn't moved past the evaluator
+yet, at least for stateful, multi-surface UIs. *Signal it has:* the ledger shows the
+evaluator taking a large share while several consecutive verdicts come back `pass`
+with no blocking issues, and the non-blocking issues it raises were already in the
+generator's report.
 
 **3. The planner.** Load-bearing longer than the other two, because under-scoping is
 a failure of what the prompt asked for, not of model capability. There is no flag —
@@ -357,7 +386,13 @@ the spec, and a generator given the raw one-line idea produces the same feature 
 the planner would have.
 
 **4. The final assessment — keep it longest.** It is the only check graded against
-criteria the generator never helped write. Its cost is one evaluator pass per run.
+criteria the generator never helped write. Its cost is one evaluator pass per run in
+sprint mode; with sprints off it is however many rounds `maxFinalQaRounds` allows —
+the real run above needed three.
+
+**A caveat on all of this: n = 1.** One spec, one run, one model. Re-run this kind of
+comparison — not just re-read this section — before trusting a default this plugin
+ships to change your own project's behavior.
 
 **5. The artifact protocol — keep it.** `handoff.md`, `state.json` and the file-based
 contract are not compensating for a model weakness. They are how a run survives a

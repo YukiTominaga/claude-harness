@@ -73,15 +73,27 @@ The `harness` block, with these defaults, is part of what you show:
 {
   "harness": {
     "useEvaluator": true,
-    "useSprints": true,
+    "useSprints": false,
     "contextReset": true,
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
-    "maxFinalQaRounds": 3,
+    "maxFinalQaRounds": 5,
     "costPerMTokUsd": null
   }
 }
 ```
+
+`useSprints` defaults to `false` (v2 mode) because `harness-generator` and
+`harness-evaluator` are pinned to `claude-opus-5` regardless of this config — a
+model capable enough that per-sprint decomposition is measured overhead, not a
+safety net it needs. Set it to `true` if the human wants the smaller,
+reviewed-as-you-go increments instead — a larger or more tightly-coupled spec than
+a single Opus 5 session comfortably holds is the signal to do that, and there is no
+way to detect that signal automatically, so ask if scope looks large.
+
+`maxFinalQaRounds` defaults to 5, not 3, specifically because `useSprints: false`
+moves defect-catching from many small per-sprint checks to fewer large end-of-run
+ones — the round budget needs more room to converge without the early safety net.
 
 `costPerMTokUsd` is optional. Set it and `/harness-status` will convert the ledger's
 token counts into an estimated-USD column, which is what makes "is the evaluator
