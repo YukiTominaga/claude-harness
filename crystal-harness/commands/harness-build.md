@@ -13,10 +13,26 @@ Read the `crystal-harness:harness-protocol` skill before touching any file.
 ## Preconditions
 
 Require `.harness/config.json` and `.harness/spec.md`. If `spec.md` is missing, stop
-and point at `/crystal-harness:harness-plan`. If `state.json` says `phase: "blocked"`,
-stop and print `blockedReason` — a human decision cleared nothing yet.
+and point at `/crystal-harness:harness-plan`.
 
 `$1`, if given, overrides `harness.maxSprints` for this invocation only.
+
+### Clearing a block
+
+If `state.json` says `phase: "blocked"`, print `blockedReason` in full together with
+the last verdict's blocking issues, then **ask the human whether to clear it** and
+stop until they answer. Do not clear it silently — the block exists because the loop
+decided it could not make progress on its own, and resuming without a decision just
+reproduces the failure.
+
+If they say continue, record in `journal.md` that a human cleared the block and what
+they decided, set `phase` back to the value implied by the current sprint's status
+(`contracting` if the last sprint passed and another remains, `revising` if it
+failed), reset `consecutiveFailures` to 0, clear `repeatedIssueFingerprints`, and
+proceed. A block that was `maxSprints reached` clears by re-invoking with no argument
+or a higher one; a block that was `revisions exhausted` should normally be cleared
+only alongside a change the human made — say so if the working tree is unchanged
+since the block.
 
 ## Mode selection
 
