@@ -1,0 +1,18 @@
+{
+  "name": "crystal-harness-local",
+  "owner": {
+    "name": "tominaga",
+    "email": "tominaga@utaha.io"
+  },
+  "description": "Local marketplace hosting the crystal-harness plugin.",
+  "plugins": [
+    {
+      "name": "crystal-harness",
+      "source": "./",
+      "description": "Multi-agent harness for long-running application development.",
+      "version": "0.1.0",
+      "category": "workflow",
+      "keywords": ["harness", "multi-agent", "evaluation", "qa"]
+    }
+  ]
+}

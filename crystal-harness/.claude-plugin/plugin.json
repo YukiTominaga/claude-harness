@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "crystal-harness",
+  "displayName": "Crystal Harness",
+  "description": "Multi-agent harness for long-running application development: separated generation and evaluation, operationalized QA rubric, context reset via file handoffs, and sprint contracts.",
+  "version": "0.1.0",
+  "author": {
+    "name": "tominaga",
+    "email": "tominaga@utaha.io"
+  },
+  "license": "MIT",
+  "keywords": [
+    "harness",
+    "multi-agent",
+    "evaluation",
+    "qa",
+    "long-running",
+    "playwright"
+  ]
+}
