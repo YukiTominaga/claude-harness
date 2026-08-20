@@ -1,12 +1,24 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/inject_harness_context.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking for an existing harness run"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/guard-harness-artifacts.sh\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/guard_harness_artifacts.py\"",
             "timeout": 15,
             "statusMessage": "Checking harness artifact ownership"
           }

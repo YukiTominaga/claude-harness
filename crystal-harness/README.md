@@ -172,9 +172,8 @@ How it behaves at the edges, and why:
   any redirection sniffer there would break more runs than it would catch. That
   residual gap is why the agent prompts state the rule as well.
 
-`scripts/guard-harness-artifacts.sh` is a thin wrapper whose only job is turning a
-missing interpreter into a loud block; the policy is in
-`scripts/guard_harness_artifacts.py`.
+The policy is in `scripts/guard_harness_artifacts.py`, invoked directly via `python3`
+from `hooks/hooks.json` (python3 is assumed to be present).
 
 ## Configuration reference
 
@@ -449,7 +448,7 @@ crystal-harness/
 │       ├── SKILL.md                     # six dimensions, anchors, thresholds, verdict.json schema
 │       └── references/calibration-examples.md
 ├── hooks/hooks.json
-├── scripts/{guard-harness-artifacts.sh, guard_harness_artifacts.py}
+├── scripts/{guard_harness_artifacts.py, inject_harness_context.py}
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```

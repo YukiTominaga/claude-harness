@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 
-GUARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guard-harness-artifacts.sh")
+GUARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guard_harness_artifacts.py")
 
 DENY, ALLOW, BLOCK = "deny", "allow", "block"
 
@@ -27,7 +27,7 @@ DENY, ALLOW, BLOCK = "deny", "allow", "block"
 def run(event, cwd):
     """Return the guard's decision: 'deny', 'allow', or 'block' (exit 2)."""
     proc = subprocess.run(
-        ["bash", GUARD],
+        ["python3", GUARD],
         input=json.dumps(event),
         capture_output=True,
         text=True,
@@ -97,7 +97,7 @@ def main():
         failures = []
         for name, event, expected in cases(root):
             if event == "MALFORMED":
-                proc = subprocess.run(["bash", GUARD], input="not json", capture_output=True, text=True, cwd=root)
+                proc = subprocess.run(["python3", GUARD], input="not json", capture_output=True, text=True, cwd=root)
                 got = BLOCK if proc.returncode == 2 else ALLOW
             else:
                 got = run(event, root)
