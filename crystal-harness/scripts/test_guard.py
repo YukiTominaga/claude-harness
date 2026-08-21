@@ -61,9 +61,18 @@ def cases(root):
         ("gen -> final qa.md", write(gen, ".harness/final/02/qa.md", root), DENY),
         # Case-insensitive filesystems resolve these to the same file.
         ("gen -> .HARNESS/.../VERDICT.JSON", write(gen, ".HARNESS/Sprints/01/VERDICT.JSON", root), DENY),
+        # The generator may not rewrite the orchestrator's run state either —
+        # a self-serving handoff.md is self-grading with extra steps.
+        ("gen -> state.json", write(gen, ".harness/state.json", root), DENY),
+        ("gen -> handoff.md", write(gen, ".harness/handoff.md", root), DENY),
+        ("gen -> journal.md", write(gen, ".harness/journal.md", root), DENY),
+        ("gen -> spec.md", write(gen, ".harness/spec.md", root), DENY),
+        ("gen -> config.json", write(gen, ".harness/config.json", root), DENY),
         # Shell is the obvious way around a path check, for the one agent with no
         # legitimate reason to name a verdict artifact at all.
         ("gen -> bash redirect into verdict", bash(gen, "echo x > .harness/sprints/01/verdict.json", root), DENY),
+        ("gen -> bash redirect into handoff", bash(gen, "echo x >> .harness/handoff.md", root), DENY),
+        ("gen -> bash naming state.json", bash(gen, "cat .harness/state.json", root), DENY),
         # What the generator legitimately does.
         ("gen -> sprints report.md", write(gen, ".harness/sprints/01/report.md", root), ALLOW),
         ("gen -> final report.md", write(gen, ".harness/final/01/report.md", root), ALLOW),
@@ -74,9 +83,20 @@ def cases(root):
         ("eval -> application source", write(ev, "src/App.tsx", root), DENY),
         ("eval -> ../ traversal escape", write(ev, ".harness/../src/App.tsx", root), DENY),
         ("eval -> symlink escape", write(ev, ".harness/escape/App.tsx", root), DENY),
+        # Inside .harness/ the evaluator still owns only its round artifacts:
+        # not the run state, not the spec, not the generator's report.
+        ("eval -> state.json", write(ev, ".harness/state.json", root), DENY),
+        ("eval -> handoff.md", write(ev, ".harness/handoff.md", root), DENY),
+        ("eval -> spec.md", write(ev, ".harness/spec.md", root), DENY),
+        ("eval -> sprints report.md", write(ev, ".harness/sprints/01/report.md", root), DENY),
+        ("eval -> final report.md", write(ev, ".harness/final/01/report.md", root), DENY),
+        ("eval -> stray note in .harness", write(ev, ".harness/notes.md", root), DENY),
         # What the evaluator legitimately does.
         ("eval -> final verdict.json", write(ev, ".harness/final/01/verdict.json", root), ALLOW),
         ("eval -> sprints qa.md", write(ev, ".harness/sprints/01/qa.md", root), ALLOW),
+        ("eval -> sprints screenshots", write(ev, ".harness/sprints/01/screenshots/fail.png", root), ALLOW),
+        ("eval -> contract review block", write(ev, ".harness/sprints/01/contract.md", root), ALLOW),
+        ("eval -> playwright artifacts", write(ev, ".harness/artifacts/snap.png", root), ALLOW),
         ("eval -> bash dev server", bash(ev, "npm run dev", root), ALLOW),
         ("eval -> bash sqlite3 read", bash(ev, 'sqlite3 app.db "select count(*) from notes"', root), ALLOW),
         # Agents outside the harness are none of the guard's business.

@@ -42,8 +42,20 @@ internally.
 ## Record the ledger after every subagent call
 
 The Agent tool's result reports `duration_ms` and `subagent_tokens`. After **every**
-call, append an entry to `state.json`'s `ledger` with the agent, phase, sprint, round,
-duration and tokens. Write `null` for anything unavailable; never estimate.
+call, append an entry to `state.json`'s `ledger` by running the plugin's helper —
+never by rewriting `state.json` by hand, which risks a malformed file and a wrong
+timestamp on every phase:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/append_ledger.py" \
+  --agent harness-evaluator --phase qa --sprint 3 --round 1 \
+  --duration-ms <duration_ms> --tokens <subagent_tokens>
+```
+
+Omit any numeric flag whose value the Agent result did not report — the script
+records `null`; never estimate. It stamps `ts` and `updatedAt` itself and writes
+atomically. Other `state.json` changes (phase, sprint statuses, verdict summaries)
+are still yours to edit directly.
 
 This is not bookkeeping. The recurring judgement this harness exists to support is
 *is this component still worth its cost*, and the ledger is the only place that
@@ -124,10 +136,17 @@ Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the contrac
 the API and datastore directly, locates the cause of each failure in the code, and
 writes `qa.md`, `verdict.json`, and screenshots.
 
-Read `verdict.json` yourself and validate it against the `qa-rubric` schema — six
-scores present, every blocking issue carrying a `cause`. If
-it does not conform, send it back once for correction; a malformed verdict must not be
-interpreted generously.
+Validate the verdict with the plugin's checker — do not eyeball it against the
+schema yourself:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_verdict.py" .harness/sprints/NN/verdict.json
+```
+
+It checks the full `qa-rubric` schema plus the consistency rules (a pass with
+blocking issues, failed criteria, or `degraded: true` is a contradiction). If it
+prints violations, send the verdict back once for correction with that exact list;
+a malformed verdict must not be interpreted generously.
 
 Append the round to the sprint's `verdicts` array in `state.json` so the trend is
 visible later.
@@ -184,7 +203,8 @@ For round `NN` starting at 01:
 2. Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the running
    app, and `.harness/final/NN/`. It derives `SPEC-n` criteria from the spec itself —
    there is no contract to negotiate, which is the point.
-3. Read and validate the verdict; append to `finalRounds`.
+3. Validate the verdict with `validate_verdict.py` as in the sprint loop; append to
+   `finalRounds`.
 4. **Pass** → commit, set `phase: "done"`, write the final handoff, and report.
    **Fail** → set `phase: "final-building"`, spawn a fresh generator against the
    blocking issues only, which writes `.harness/final/NN/report.md`; then increment

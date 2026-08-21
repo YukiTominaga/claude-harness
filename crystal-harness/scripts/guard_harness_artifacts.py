@@ -1,7 +1,22 @@
 """Artifact-ownership policy for the crystal-harness plugin.
 
-Reads a PreToolUse hook event on stdin. See guard-harness-artifacts.sh for the
-contract and the rationale.
+Reads a PreToolUse hook event on stdin and enforces the ownership table in the
+harness-protocol skill. The design of the harness assumes two boundaries hold:
+
+- The generator never authors a verdict (qa.md / verdict.json / screenshots),
+  and never rewrites the orchestrator's run state (state.json, handoff.md,
+  journal.md, config.json, spec.md). A generator that writes its own verdict or
+  its own handoff is self-grading, which destroys the whole design.
+- The evaluator never edits what it grades. Its writes are confined to its own
+  round directories under .harness/sprints/ and .harness/final/ (where
+  contract.md review blocks, qa.md, verdict.json and screenshots live) and the
+  Playwright scratch area .harness/artifacts/. It may not write report.md —
+  that file is the generator's testimony — nor anything outside .harness/.
+
+Prompt instructions state these rules too; this hook is what makes them
+guarantees instead of requests. Fail closed: an event the policy cannot read is
+blocked, because a guard that waves through what it could not inspect is worse
+than no guard.
 """
 
 import json
@@ -9,6 +24,7 @@ import os
 import sys
 
 PROTECTED_LEAVES = ("qa.md", "verdict.json", "screenshots")
+ORCHESTRATOR_LEAVES = ("state.json", "handoff.md", "journal.md", "config.json", "spec.md")
 
 
 def allow():
@@ -74,6 +90,28 @@ def is_verdict_artifact(parts):
     )
 
 
+def is_orchestrator_file(parts):
+    """.harness/{state.json,handoff.md,journal.md,config.json,spec.md}"""
+    return len(parts) == 2 and parts[0] == ".harness" and parts[1] in ORCHESTRATOR_LEAVES
+
+
+def evaluator_may_write(parts):
+    """The evaluator's writable surface, per the ownership table.
+
+    - .harness/artifacts/... — Playwright scratch output.
+    - .harness/{sprints,final}/NN/... — its round artifacts, including the
+      review block it appends to contract.md, but never report.md, which is
+      the generator's completion report.
+    """
+    if not parts or parts[0] != ".harness":
+        return False
+    if len(parts) >= 3 and parts[1] == "artifacts":
+        return True
+    if len(parts) >= 4 and parts[1] in ("sprints", "final"):
+        return parts[3] != "report.md"
+    return False
+
+
 def main():
     event = load_event()
 
@@ -91,10 +129,11 @@ def main():
     # Shell writes cannot be checked by resolving a path, and sniffing redirections
     # is both leaky and prone to blocking legitimate work. One narrow case is worth
     # covering because it has no false positives: the generator has no legitimate
-    # reason to name a verdict artifact in a shell command at all — it reads them
-    # with Read. The evaluator's Bash is deliberately not policed; it runs the
-    # project's own build, test and dev commands, and any heuristic there would
-    # break the run more often than it would catch anything.
+    # reason to name a verdict artifact or an orchestrator-owned run file in a
+    # shell command at all — it reads them with Read. The evaluator's Bash is
+    # deliberately not policed; it runs the project's own build, test and dev
+    # commands, and any heuristic there would break the run more often than it
+    # would catch anything.
     if tool == "Bash":
         if agent != "harness-generator":
             allow()
@@ -106,6 +145,13 @@ def main():
                 "shell. Only harness-evaluator produces verdicts; read them with "
                 "Read if you are revising."
             )
+        for leaf in ("state.json", "handoff.md", "journal.md"):
+            if leaf in lowered:
+                deny(
+                    f"harness-generator may not touch {leaf} through the shell. "
+                    "The orchestrating command owns the run state; read it with "
+                    "Read if you need it."
+                )
         allow()
 
     target = (
@@ -118,19 +164,29 @@ def main():
         allow()
 
     rel, parts = project_relative(target, real_cwd)
-    in_harness = bool(parts) and parts[0] == ".harness"
 
-    if agent == "harness-generator" and is_verdict_artifact(parts):
-        deny(
-            f"harness-generator may not write {rel}. Only harness-evaluator "
-            "produces verdicts. Report what you built in report.md; the verdict is "
-            "not yours to write."
-        )
+    if agent == "harness-generator":
+        if is_verdict_artifact(parts):
+            deny(
+                f"harness-generator may not write {rel}. Only harness-evaluator "
+                "produces verdicts. Report what you built in report.md; the verdict is "
+                "not yours to write."
+            )
+        if is_orchestrator_file(parts):
+            deny(
+                f"harness-generator may not write {rel}. The orchestrating command "
+                "owns the run state (state.json, handoff.md, journal.md, config.json, "
+                "spec.md). Report what you did in report.md and let the caller record it."
+            )
 
-    if agent == "harness-evaluator" and not in_harness:
+    if agent == "harness-evaluator" and not evaluator_may_write(parts):
         deny(
-            f"harness-evaluator may not write {rel}. The evaluator does not edit "
-            "what it grades. Record the defect as a blocking issue in qa.md instead."
+            f"harness-evaluator may not write {rel}. The evaluator writes only its "
+            "round artifacts under .harness/sprints/NN/ or .harness/final/NN/ "
+            "(qa.md, verdict.json, screenshots, the contract review block) and "
+            ".harness/artifacts/. It does not edit what it grades and does not "
+            "write report.md or the run state. Record defects as blocking issues "
+            "in qa.md instead."
         )
 
     allow()

@@ -58,8 +58,11 @@ assessment asks whether the product `spec.md` described actually exists.
 | `state.json`, `handoff.md`, `journal.md` | the orchestrating command | everyone |
 
 The generator writing its own verdict is the single failure that destroys the whole
-design, so it is also blocked by a `PreToolUse` hook covering both `sprints/NN/` and
-`final/NN/`, not just by instruction.
+design, so this table is enforced by a `PreToolUse` hook, not just by instruction:
+the generator is blocked from verdict artifacts in both `sprints/NN/` and
+`final/NN/` and from the orchestrator-owned files (`state.json`, `handoff.md`,
+`journal.md`, `config.json`, `spec.md`); the evaluator is blocked from everything
+except its round artifacts, the contract review block, and `.harness/artifacts/`.
 
 ## `state.json`
 
@@ -152,8 +155,10 @@ decision moves it — `/harness-build` asks before clearing it.
 ### The ledger is not optional
 
 After **every** subagent call, append a ledger entry using the `durationMs` and
-`subagent_tokens` the Agent tool reports in its result. If a value is unavailable,
-write `null` rather than omitting the entry or estimating.
+`subagent_tokens` the Agent tool reports in its result. Use the plugin's
+`scripts/append_ledger.py` helper rather than rewriting `state.json` by hand — it
+stamps the timestamp, appends the entry, and writes atomically. If a value is
+unavailable, omit its flag so the script records `null`; never estimate.
 
 This exists for one reason. The most important recurring judgement in this harness
 is *is this component still worth its cost*, and that question cannot be answered
