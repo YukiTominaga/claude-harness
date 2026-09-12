@@ -10,7 +10,7 @@ Idea: `$ARGUMENTS`
 
 Read the `crystal-harness:harness-protocol` skill. Require `.harness/config.json` to
 exist — if it does not, stop and tell the human to run
-`/crystal-harness:harness-init` first. Do not initialize on their behalf; init needs
+`/crystal-harness:init` first. Do not initialize on their behalf; init needs
 their confirmation of the detected commands.
 
 ## Procedure
@@ -30,7 +30,7 @@ their confirmation of the detected commands.
    - an invented AI feature in "Where AI adds real value" that the product does not
      need.
 5. Append a journal entry. Rewrite `.harness/handoff.md` with `phase: planning`
-   complete and "Next action" = run `/crystal-harness:harness-build`.
+   complete and "Next action" = run `/crystal-harness:build`.
 6. Set `state.json` `phase: "contracting"`, `currentSprint: 1`.
 
 ## Then stop
@@ -43,6 +43,6 @@ Show the human:
 - every open question with the assumption the planner made
 - anything you flagged in step 4
 
-Then **wait**. Do not start building. `/crystal-harness:harness-build` is a separate,
+Then **wait**. Do not start building. `/crystal-harness:build` is a separate,
 deliberate step, because the spec is the one artifact where a wrong assumption is
 cheap to fix now and expensive to fix after four sprints are built on it.

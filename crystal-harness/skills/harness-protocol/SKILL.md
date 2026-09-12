@@ -17,7 +17,7 @@ A fresh agent reading complete files does not.
 
 ```
 .harness/
-├── config.json          # harness configuration, written by /harness-init
+├── config.json          # harness configuration, written by /crystal-harness:init
 ├── spec.md              # planner output: the product specification
 ├── state.json           # machine-readable run state, including the cost ledger
 ├── handoff.md           # rolling context-reset handoff artifact
@@ -50,7 +50,7 @@ assessment asks whether the product `spec.md` described actually exists.
 
 | Path | Written by | Read by |
 | --- | --- | --- |
-| `config.json` | `/harness-init`, the human | everyone |
+| `config.json` | `/crystal-harness:init`, the human | everyone |
 | `spec.md` | planner | generator, evaluator |
 | `sprints/NN/contract.md` | generator (proposal), evaluator (review block) | both |
 | `sprints/NN/report.md`, `final/NN/report.md` | generator | evaluator |
@@ -150,7 +150,7 @@ JSON Schema (draft 2020-12):
 ```
 
 `phase: "blocked"` means the loop stopped and is waiting for a human. Only a human
-decision moves it — `/harness-build` asks before clearing it.
+decision moves it — `/crystal-harness:build` asks before clearing it.
 
 ### The ledger is not optional
 

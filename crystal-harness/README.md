@@ -74,25 +74,25 @@ back `Unknown command` in the next session. If `enabled` is false, run
 ## Quickstart
 
 ```
-/crystal-harness:harness-init
-/crystal-harness:harness-plan a pomodoro timer with session history
-/crystal-harness:harness-build
+/crystal-harness:init
+/crystal-harness:plan a pomodoro timer with session history
+/crystal-harness:build
 ```
 
-`harness-init` shows you the detected config and waits. `harness-plan` shows you the
-spec and waits. `harness-build` then runs the loop — sprints, then the final
-assessment — and only stops when it needs a decision from you.
+`/crystal-harness:init` shows you the detected config and waits. `/crystal-harness:plan`
+shows you the spec and waits. `/crystal-harness:build` then runs the loop — sprints, then
+the final assessment — and only stops when it needs a decision from you.
 
 At any point:
 
 ```
-/crystal-harness:harness-status                # where is the run, and what has it cost
-/crystal-harness:harness-qa [n|final]          # grade the current tree, standalone
-/crystal-harness:harness-resume                # after a crash, /clear, or a new session
+/crystal-harness:status                # where is the run, and what has it cost
+/crystal-harness:qa [n|final]          # grade the current tree, standalone
+/crystal-harness:resume                # after a crash, /clear, or a new session
 ```
 
 > Plugin commands are namespaced: the real invocation is
-> `/crystal-harness:harness-init`, not `/harness-init`.
+> `/crystal-harness:init`, not `/init`.
 
 ## The `.harness/` artifact contract
 
@@ -128,7 +128,7 @@ fresh agent with zero prior context to continue: current goal, what is done *and
 verified*, exactly where work stopped, known-broken things, decisions not to be
 relitigated, **approaches already tried and rejected**, the files that matter, and
 **one** next action. A handoff whose phase disagrees with `state.json` is a hard error
-— `harness-resume` refuses to continue until a human resolves it.
+— `/crystal-harness:resume` refuses to continue until a human resolves it.
 
 ### The cost ledger
 
@@ -137,7 +137,7 @@ agent, phase, wall time and token count reported by the Agent tool.
 
 This exists because the most important recurring judgement in this design is *is this
 component still worth its cost*, and that cannot be answered from prose.
-`/harness-status` aggregates it into a per-agent table and names the evaluator's share
+`/crystal-harness:status` aggregates it into a per-agent table and names the evaluator's share
 of the run. Set `harness.costPerMTokUsd` and it converts to estimated dollars.
 
 Without this, the "what to strip" section below would be an opinion. With it, "the
@@ -177,7 +177,7 @@ from `hooks/hooks.json` (python3 is assumed to be present).
 
 ## Configuration reference
 
-`.harness/config.json`, written by `harness-init` after you confirm it.
+`.harness/config.json`, written by `/crystal-harness:init` after you confirm it.
 
 ```jsonc
 {
@@ -204,12 +204,12 @@ from `hooks/hooks.json` (python3 is assumed to be present).
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxFinalQaRounds": 5,
-    "costPerMTokUsd": null            // set to show estimated $ in harness-status
+    "costPerMTokUsd": null            // set to show estimated $ in /crystal-harness:status
   }
 }
 ```
 
-On an existing repository, `harness-init` detects `commands`, `urls` and `database`
+On an existing repository, `/crystal-harness:init` detects `commands`, `urls` and `database`
 from `package.json` scripts, the lockfile, framework configs, `pyproject.toml` and ORM
 settings, then shows you each value annotated with where it came from. The defaults
 apply only to a greenfield directory. **It never invents a dev command** — ambiguous
@@ -336,7 +336,7 @@ run **never** returns `pass`. Two degraded runs in a row stop the loop.
 The run is designed to survive `/clear`, a crash, and a new machine.
 
 ```
-/crystal-harness:harness-resume
+/crystal-harness:resume
 ```
 
 It reads `state.json` → `handoff.md` → `config.json` → `spec.md` → the current round's
@@ -357,7 +357,7 @@ generator and evaluator are pinned to `claude-opus-5`, a model in that class, so
 default configuration already reflects that stripping. What follows is what's already
 stripped, what still isn't, and the evidence for each — not a to-do list.
 
-**Use the ledger, not your impression.** `/harness-status` gives you tokens, wall time
+**Use the ledger, not your impression.** `/crystal-harness:status` gives you tokens, wall time
 and per-agent share; the per-round scores tell you whether rounds still buy anything.
 When a future model lands, remove one component at a time and compare the next run's
 final assessment against the last, the same way the change below was made.
@@ -388,7 +388,7 @@ generator's report.
 
 **3. The planner.** Load-bearing longer than the other two, because under-scoping is
 a failure of what the prompt asked for, not of model capability. There is no flag —
-stop running `/harness-plan` and write `spec.md` yourself. *Signal:* you barely edit
+stop running `/crystal-harness:plan` and write `spec.md` yourself. *Signal:* you barely edit
 the spec, and a generator given the raw one-line idea produces the same feature list
 the planner would have.
 
@@ -440,7 +440,7 @@ memory, a grader that is not the author — should not.
 crystal-harness/
 ├── .claude-plugin/plugin.json
 ├── agents/{harness-planner, harness-generator, harness-evaluator}.md
-├── commands/harness-{init,plan,build,qa,resume,status}.md
+├── commands/{init,plan,build,qa,resume,status}.md
 ├── skills/
 │   ├── harness-protocol/SKILL.md        # .harness/ contract, both JSON Schemas, handoff template, ledger
 │   ├── sprint-contract/SKILL.md         # pinned interfaces and testable acceptance criteria

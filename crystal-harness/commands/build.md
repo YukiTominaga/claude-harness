@@ -13,7 +13,7 @@ Read the `crystal-harness:harness-protocol` skill before touching any file.
 ## Preconditions
 
 Require `.harness/config.json` and `.harness/spec.md`. If `spec.md` is missing, stop
-and point at `/crystal-harness:harness-plan`.
+and point at `/crystal-harness:plan`.
 
 `$1`, if given, overrides `harness.maxSprints` for this invocation only.
 

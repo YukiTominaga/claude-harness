@@ -7,7 +7,7 @@ Report the state of this harness run. Read-only: change nothing, spawn nothing.
 
 Read `.harness/state.json`, `.harness/config.json`, `.harness/handoff.md`, and every
 `verdict.json` under `.harness/sprints/` and `.harness/final/`. If `.harness/` does
-not exist, say so and point at `/crystal-harness:harness-init`.
+not exist, say so and point at `/crystal-harness:init`.
 
 Print exactly this, in this order.
 
@@ -66,7 +66,7 @@ more recurrence stops the loop.
 
 The "Next action" line from `handoff.md`, verbatim, plus the command that performs it.
 If `handoff.md`'s phase/sprint disagrees with `state.json`, say the handoff is stale
-and that `/crystal-harness:harness-resume` will refuse to continue until it is
+and that `/crystal-harness:resume` will refuse to continue until it is
 resolved.
 
 Add no commentary about progress or quality.

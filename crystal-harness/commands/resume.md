@@ -40,7 +40,7 @@ resumed agent that guesses wrong rebuilds working code a different way.
   so; something was edited outside the loop.
 - `phase: "blocked"` → print `blockedReason` and the last verdict's blocking issues,
   and stop. A block is cleared by a human decision, not by resuming — tell them the
-  decision is made by re-invoking `/crystal-harness:harness-build`, which asks
+  decision is made by re-invoking `/crystal-harness:build`, which asks
   whether to clear it before doing anything else.
 
 ## 3. Confirm before continuing
@@ -62,7 +62,7 @@ Ask: continue from "Next action", or roll back to `lastGoodCommit` first?
 ## 4. Continue
 
 On confirmation, re-enter the loop at the reconstructed phase by following
-`/crystal-harness:harness-build` from that point. Every subagent you spawn is fresh
+`/crystal-harness:build` from that point. Every subagent you spawn is fresh
 and gets file paths — never a narrative reconstruction of what you just read.
 
 Append a journal entry recording the resume, the phase resumed at, and the commit

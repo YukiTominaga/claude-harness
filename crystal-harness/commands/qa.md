@@ -33,7 +33,7 @@ Target, from `$1`:
 
 Do not change `phase` and do not mark anything `passed` here — a standalone QA is
 evidence, not a loop transition. If it passes and the human wants that recorded, they
-run `/crystal-harness:harness-build`, which owns run state.
+run `/crystal-harness:build`, which owns run state.
 
 If the app cannot be started, report that as the verdict with the literal command and
 output. Do not debug the application.

@@ -95,7 +95,7 @@ way to detect that signal automatically, so ask if scope looks large.
 moves defect-catching from many small per-sprint checks to fewer large end-of-run
 ones — the round budget needs more room to converge without the early safety net.
 
-`costPerMTokUsd` is optional. Set it and `/harness-status` will convert the ledger's
+`costPerMTokUsd` is optional. Set it and `/crystal-harness:status` will convert the ledger's
 token counts into an estimated-USD column, which is what makes "is the evaluator
 worth its cost on this project" answerable with a number. Left `null`, the ledger
 still records tokens and wall time.
@@ -110,7 +110,7 @@ After confirmation, create:
   `lastGoodCommit` set to `git rev-parse HEAD` if the repo has a commit, else `null`.
 - `.harness/journal.md` — one entry recording initialization and what was detected.
 - `.harness/handoff.md` — using the template in `harness-protocol`, with
-  "Next action" = run `/crystal-harness:harness-plan <idea>`.
+  "Next action" = run `/crystal-harness:plan <idea>`.
 - `.harness/sprints/`, `.harness/final/`, `.harness/artifacts/` — empty directories
   with `.gitkeep`.
 
