@@ -124,7 +124,7 @@ JSON Schema (draft 2020-12):
   "$defs": {
     "verdictSummaries": {
       "type": "array",
-      "description": "one entry per QA round, oldest first. Used by sprints[].verdicts and by finalRounds — the six scores across rounds are the trend a human reads to decide whether another round is worth its cost.",
+      "description": "one entry per QA round, oldest first. Used by sprints[].verdicts and by finalRounds — the six scores across rounds are the trend a human reads to decide whether another round is worth its cost. This array is the ONLY per-round history: each round overwrites its directory's verdict.json and qa.md, so anything not copied here is gone after the next round.",
       "items": {
         "type": "object",
         "required": ["round", "overall"],
@@ -132,6 +132,7 @@ JSON Schema (draft 2020-12):
         "properties": {
           "round": { "type": "integer", "minimum": 0 },
           "overall": { "enum": ["pass", "fail", null], "description": "null while the round is still building or in QA" },
+          "verificationMode": { "enum": ["browser", "headless", "degraded", null], "description": "copied from that round's environment.verificationMode. Without it a score trend silently mixes modes, and the two-consecutive-degraded stopping rule has nothing to read." },
           "scores": { "type": ["object", "null"], "description": "the six dimension scores from that round's verdict.json" },
           "blockingCount": { "type": ["integer", "null"], "minimum": 0 },
           "commit": { "type": ["string", "null"] }

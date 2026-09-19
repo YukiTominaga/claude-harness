@@ -30,8 +30,11 @@ Target, from `$1`:
    without saying so in the journal.
 4. Read the returned `verdict.json`, validate it with `validate_verdict.py` —
    never by eye — append a journal entry, append the round to `state.json`
-   (`sprints[].verdicts` or `finalRounds`), and **append a `ledger` entry** with
-   the evaluator's `duration_ms` and `subagent_tokens` from the Agent result.
+   (`sprints[].verdicts` or `finalRounds`) **including its
+   `environment.verificationMode`**, and **append a `ledger` entry** with the
+   evaluator's `duration_ms` and `subagent_tokens` from the Agent result.
+   The summary is the only per-round history: the next round overwrites this
+   round's `verdict.json` in place.
 
 This command does not commission a codex review; that belongs to the build loop,
 which knows which diff the round produced. If a `codex-review.md` is already in the

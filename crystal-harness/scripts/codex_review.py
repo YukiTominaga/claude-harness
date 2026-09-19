@@ -30,6 +30,13 @@ Exit codes:
     3  codex is not available here — skip it, this is not a failure
     1  codex is available but the review could not be produced
 
+The exit code is the whole interface, so it has to mean exactly one thing:
+**--out holds a review of the current diff if and only if this exits 0.** Any
+other outcome removes the file first, including a leftover from an earlier
+round in the same directory — a revision reuses its round directory, and a
+review of the previous diff read as evidence about this one is worse than no
+review at all.
+
 With --required, an unavailable codex exits 1 instead of 3, for the
 `codexReview: true` configuration where a missing review is a real problem.
 """
@@ -211,7 +218,7 @@ def render_findings(findings):
     return lines
 
 
-def render(payload, mode):
+def render(payload, mode, reviewed_sha=None):
     codex = payload.get("codex") if isinstance(payload.get("codex"), dict) else {}
     target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
     generated = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -220,8 +227,8 @@ def render(payload, mode):
         f"# Codex review — {payload.get('review', mode)}",
         "",
         f"Generated at: {generated}",
+        f"Reviewed commit: {reviewed_sha or 'unknown'}",
         f"Target: {target.get('label', 'unknown')}",
-        f"Codex exit status: {codex.get('status', 'unknown')}",
         "",
         "> This is an independent review by a non-Claude model, run before the",
         "> evaluator was spawned. It is evidence about the code, not a verdict:",
@@ -261,6 +268,31 @@ def render(payload, mode):
     lines.append(body if body else "_Codex produced no review text._")
     lines.append("")
     return "\n".join(lines).rstrip() + "\n", None
+
+
+def head_sha(cwd):
+    """The commit this review is about, stamped into the file it produces.
+
+    A reader — the evaluator included — otherwise cannot tell which diff a
+    review covered, and a file from an earlier round looks exactly like a
+    current one.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    return completed.stdout.strip() or None
+
+
+def clear_stale_output(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log(f"could not remove the previous {path} ({exc}); it may be stale")
 
 
 def write_atomic(path, content):
@@ -307,6 +339,13 @@ def main():
     cwd = os.path.abspath(os.path.expanduser(args.cwd))
     verb = "reporting it as unavailable" if args.check else "skipping the review"
 
+    # A revision round reuses its round directory, so an earlier round's review
+    # would still be sitting at --out if this run skips or fails. The evaluator
+    # reads whatever file is there as evidence about the current diff, so the
+    # stale one is worse than none: clear it before anything can go wrong.
+    if not args.check:
+        clear_stale_output(args.out)
+
     companion = find_companion(args.codex_root)
     if not companion:
         log(f"the codex plugin was not found — {verb}")
@@ -335,11 +374,17 @@ def main():
         log("the codex review returned something other than an object")
         return 1
 
+    # A failed run still emits JSON on stdout, and its review text is empty or
+    # partial. Writing it anyway and exiting 0 would tell the orchestrator this
+    # round has an independent review when it has a placeholder.
     status = (payload.get("codex") or {}).get("status")
     if status not in (0, None):
-        log(f"codex exited with status {status}; writing what it returned")
+        stderr = ((payload.get("codex") or {}).get("stderr") or "").strip()
+        detail = f": {first_error_line(stderr, status)}" if stderr else ""
+        log(f"the codex review failed — codex exited with status {status}{detail}")
+        return 1
 
-    content, finding_count = render(payload, args.mode)
+    content, finding_count = render(payload, args.mode, head_sha(cwd))
     write_atomic(args.out, content)
 
     if finding_count is None:

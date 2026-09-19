@@ -573,7 +573,8 @@ crystal-harness/
 │   ├── validate_verdict.py              # verdict.json schema + what a pass may mean per mode
 │   ├── codex_review.py                  # find the codex plugin, review the diff, write codex-review.md
 │   ├── test_guard.py
-│   └── test_validate_verdict.py
+│   ├── test_validate_verdict.py
+│   └── test_codex_review.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -587,6 +588,7 @@ MIT.
 ```bash
 python3 crystal-harness/scripts/test_guard.py
 python3 crystal-harness/scripts/test_validate_verdict.py
+python3 crystal-harness/scripts/test_codex_review.py
 ```
 
 No framework and no dependencies.
@@ -596,13 +598,19 @@ row that denies both agents, both escape routes (`..` traversal and a symlink
 planted inside `.harness/`), case-folding, the Bash path, every legitimate write,
 and both fail-closed paths.
 
-**32 cases over the verdict validator**: the schema, and every rule about what a
+**33 cases over the verdict validator**: the schema, and every rule about what a
 `pass` may mean in each verification mode — the three dimensions headless must
 leave `null`, the conditions a headless pass has to buy that waiver with, the
 thresholds themselves, and the fact that a degraded round never passes.
 
-These two are tested and the prompts are not, because these two fail *silently*.
-If the guard stops denying, the harness keeps running and every verdict becomes
-self-awarded. If the validator stops rejecting, a round that measured nothing reads
-as a pass. Neither has a visible symptom; a prompt that drifts produces output
-somebody reads.
+**8 cases over the codex review helper**, against a fake companion so they need no
+Codex CLI: the exit-code contract in both directions — a failed codex run writes
+nothing and exits 1, and every non-zero outcome clears a leftover file from an
+earlier round before it can be read as this round's evidence.
+
+These three are tested and the prompts are not, because these three fail
+*silently*. If the guard stops denying, the harness keeps running and every verdict
+becomes self-awarded. If the validator stops rejecting, a round that measured
+nothing reads as a pass. If the review helper lies with its exit code, a round
+records a second opinion it never got, or cites one about a different diff. None
+has a visible symptom; a prompt that drifts produces output somebody reads.

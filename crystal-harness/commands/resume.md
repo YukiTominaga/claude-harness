@@ -54,9 +54,10 @@ Print a reconstruction summary and stop for confirmation:
   tried and rejected", and "Next action"
 - revision count against `maxRevisionsPerSprint`, and any issue id at ≥ 2 recurrences
 - the six scores per round across this sprint or final sequence, each round's
-  verification mode, and the ledger totals so far. If `harness.browserVerification`
-  disagrees with the mode of the last verdict, say so — the config was changed
-  mid-run and the rounds are not comparable.
+  `verificationMode` from its `state.json` summary (not from `verdict.json`, which
+  holds only the latest round), and the ledger totals so far. If
+  `harness.browserVerification` disagrees with the last round's mode, say so — the
+  config was changed mid-run and the rounds are not comparable.
 - `lastGoodCommit` and whether the working tree is clean
 
 Ask: continue from "Next action", or roll back to `lastGoodCommit` first?

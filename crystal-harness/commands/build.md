@@ -81,12 +81,18 @@ a sprint, the previous final round's `commit` for a final round, and
 diff, which is worse than not running it — check it against `git log --oneline`
 before you run.
 
-Exit codes are the whole interface. **0** — written; journal it and carry on.
-**3** — the codex plugin is not installed, not authenticated, or broken; this is
-not a failure. Say one line about it and continue to the evaluator. **1** — codex
-was available and the review failed; journal the reason and continue to the
-evaluator anyway. A missing second opinion never blocks a round, because the
-evaluator, not codex, decides the verdict.
+Exit codes are the whole interface, and they mean exactly one thing:
+**`codex-review.md` holds a review of this round's diff if and only if the script
+exits 0.** On any other outcome it removes the file first, including a leftover
+from an earlier round in the same directory — so you never have to reason about
+whether the file you see belongs to this round.
+
+**0** — written; journal it and carry on. **3** — the codex plugin is not
+installed, not authenticated, or broken; this is not a failure. Say one line about
+it and continue to the evaluator. **1** — codex was available and the review
+failed; journal the reason and continue to the evaluator anyway. A missing second
+opinion never blocks a round, because the evaluator, not codex, decides the
+verdict.
 
 Pass `--required` only when `harness.codexReview` is `true`, which turns an
 unavailable codex into exit 1 for a human who wants to know it did not run.
@@ -199,7 +205,10 @@ sets for one. If it prints violations, send the verdict back once for correction
 with that exact list; a malformed verdict must not be interpreted generously.
 
 Append the round to the sprint's `verdicts` array in `state.json` so the trend is
-visible later.
+visible later, copying `environment.verificationMode` into the summary along with
+the scores. That copy is not optional bookkeeping: the next round overwrites this
+round's `verdict.json` and `qa.md` in place, so a mode left uncopied is gone, and
+both the mixed-mode warning and the stopping rule below have nothing to read.
 
 ### 7. Branch on the verdict
 
@@ -227,11 +236,13 @@ whenever any of these holds:
 - Any `repeatedIssueFingerprints[id] >= 3` — three verdicts, same defect. Not two:
   the round that finally clears a design or depth issue is often the one that scraps
   the previous approach, and cutting that off at two is how a run stops just short.
-- The evaluator returns `verificationMode: "degraded"` twice in a row. Browser
-  verification was configured and did not work; the harness is not measuring what
-  it was told to measure, so fix the environment before spending more rounds. A
-  `headless` verdict is **not** a degraded one and never counts toward this rule —
-  nothing is broken when nobody asked for a browser.
+- The last two `verificationMode` values in the sprint's `verdicts` array are both
+  `degraded`. Browser verification was configured and did not work; the harness is
+  not measuring what it was told to measure, so fix the environment before spending
+  more rounds. Read this from the summaries, not from `verdict.json` — the previous
+  round's file has already been overwritten. A `headless` verdict is **not** a
+  degraded one and never counts toward this rule: nothing is broken when nobody
+  asked for a browser.
 - `maxSprints` reached — note this stops the sprint loop, and ask whether to run the
   final assessment on what exists.
 - The generator reports a blocking issue it could not reproduce twice in a row.
@@ -262,7 +273,7 @@ For round `NN` starting at 01:
    app, and `.harness/final/NN/`. It derives `SPEC-n` criteria from the spec itself —
    there is no contract to negotiate, which is the point.
 4. Validate the verdict with `validate_verdict.py` as in the sprint loop; append to
-   `finalRounds`.
+   `finalRounds`, copying `verificationMode` into the summary as above.
 5. **Pass** → commit, set `phase: "done"`, write the final handoff, and report.
    **Fail** → set `phase: "final-building"`, spawn a fresh generator against the
    blocking issues only, which writes `.harness/final/NN/report.md`; then increment

@@ -32,8 +32,10 @@ by side:
 
 | sprint/round | mode | PD | Fn | Ds | Or | Cr | CQ | blocking | commit |
 
-`mode` is the round's `environment.verificationMode`. Mark any score below a
-threshold that applied in that mode (PD/Fn/Ds/Or ≥ 4, Cr/CQ ≥ 3). Render a waived
+`mode` is the round's `verificationMode` from its entry in `sprints[].verdicts` or
+`finalRounds` — read it there, not from `verdict.json`, which only ever holds the
+latest round. A summary written before this field existed has no mode; print `?`
+rather than assuming one. Mark any score below a threshold that applied in that mode (PD/Fn/Ds/Or ≥ 4, Cr/CQ ≥ 3). Render a waived
 dimension as `—`, never as a number and never as a zero: a `headless` row with
 three dashes and a `browser` row with three fours are not comparable, and a reader
 must not be able to mistake one for the other. Say in one line whether the sequence
