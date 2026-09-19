@@ -19,6 +19,8 @@ Modeled on Anthropic's
 | **Display-only depth** | Every surface renders; nothing can be manipulated. | **Product depth** is its own graded dimension with a threshold of 4. A control that opens a menu whose selection does nothing scores 2. |
 | **Under-scoping** | A one-line prompt produces a thin three-feature app. | A planner writes a scope-complete spec before any code exists — ambitious on scope, deliberately silent on implementation. |
 | **Passing sprints, failing product** | Ten sprints pass; the app doesn't hold together. | A **final assessment** graded against `spec.md` with criteria nobody negotiated. The run is not finished until it passes. |
+| **A grader with the author's priors** | Generation and evaluation are separate agents, but still the same model family reading a diff that family wrote. | An optional independent review of each diff by a non-Claude model (the `codex` plugin), recorded as evidence the evaluator must confirm against the code — never as a gate. |
+| **QA too slow to run** | Browser verification dominates the cost of a round, so it gets skipped informally and nobody records that it was. | Browser verification is a config flag with **three recorded modes**. A round that skipped it says so in the verdict, and a round that wanted it and did not get it can never pass. |
 
 ## Install
 
@@ -55,8 +57,22 @@ six commands are counted as skills alongside the three reference skills):
 claude plugin details crystal-harness
 ```
 
-Requires `node`/`npx` (Playwright MCP is fetched on first use) and `python3` (the
-ownership hook).
+Requires `python3` (the ownership hook and the helper scripts) and `node`/`npx`
+(Playwright MCP, fetched on first use — only needed when you turn browser
+verification on).
+
+Optional: install [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc)
+and each round's diff also gets an independent review from a non-Claude model.
+
+```
+/plugin marketplace add openai/codex-plugin-cc
+/plugin install codex@openai-codex
+/codex:setup
+```
+
+The harness detects it by finding its `codex-companion.mjs` and asking it whether
+it is ready — installed but unauthenticated counts as absent, because it cannot
+review anything. Nothing breaks without it; see "Independent review" below.
 
 ### Updating
 
@@ -106,10 +122,11 @@ agent's conversation.
 ├── state.json           # run state + the cost ledger
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only human-readable log
-├── artifacts/           # Playwright scratch output (gitignored)
+├── artifacts/           # Playwright scratch output, browser mode only (gitignored)
 ├── sprints/01/
 │   ├── contract.md      # generator proposes, evaluator accepts
 │   ├── report.md        # generator's completion report + self-check
+│   ├── codex-review.md  # independent review of the diff, if codex is installed
 │   ├── qa.md            # evaluator verdict, human-readable
 │   ├── verdict.json     # evaluator verdict, machine-readable
 │   └── screenshots/
@@ -117,6 +134,7 @@ agent's conversation.
     ├── qa.md
     ├── verdict.json
     ├── report.md
+    ├── codex-review.md
     └── screenshots/
 ```
 
@@ -153,6 +171,9 @@ things it blocks silently destroys the design:
   self-awarded.
 - `harness-evaluator` writing anything outside `.harness/` — if the evaluator can fix
   what it grades, it is the author of what it judges.
+- **Either of them** writing `codex-review.md` — the one file both are blocked from.
+  A generator that can write it manufactures its own second opinion; an evaluator
+  that can write it edits the evidence it is about to cite.
 
 Everything else passes through untouched. There is no logging hook and no formatting
 hook; neither prevents a named failure, and scaffolding that prevents nothing is the
@@ -201,6 +222,8 @@ from `hooks/hooks.json` (python3 is assumed to be present).
     "useEvaluator": true,
     "useSprints": false,              // true → per-item contracts (v1 mode)
     "contextReset": true,             // false → keep one agent across phases
+    "browserVerification": false,     // true → drive the UI with Playwright
+    "codexReview": "auto",            // "auto" | true | false
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxFinalQaRounds": 5,
@@ -225,9 +248,22 @@ looks large. `maxFinalQaRounds` defaults to 5, not 3, for the same reason: with
 sprints off, defect-catching moves from many small per-sprint checks to fewer large
 end-of-run ones, so the round budget needs more room to converge.
 
+`browserVerification` defaults to `false`, and this is the change that makes a QA
+round cheap. Driving the app through Playwright is the most expensive thing the
+evaluator does by a wide margin, and most of what it catches is *visual*: the API,
+the datastore and the project's own test suite already catch the defects that make
+a build wrong. With it off the evaluator runs in `headless` mode and can still
+return a pass — see "Verification modes" below for exactly what that pass covers
+and what it does not. Turn it on for a run whose value is in the interface, and for
+the final assessment of anything you intend to ship.
+
+`codexReview` defaults to `"auto"`. See "Independent review".
+
 `database` matters more than it looks: the evaluator confirms every write by reading
 the datastore directly, so a run without it returns `persistenceVerified: false` on
-everything that writes.
+everything that writes — and in headless mode, a project with neither a backend nor
+a runnable test suite cannot reach a pass at all, because nothing would have been
+executed.
 
 Every `harness.*` flag can be turned off independently. That is deliberate; see
 "What to strip".
@@ -266,27 +302,34 @@ default):
 3. **Implement.** A fresh generator builds, commits at every checkpoint, runs the
    project's own build/typecheck/tests, fixes its own failures, and writes a
    `report.md` stating what is complete, what is partial, and what it did not attempt.
-4. **Context reset.** `state.json` and `handoff.md` are written, then the evaluator is
+4. **Independent review.** If the `codex` plugin is available, the sprint's diff is
+   reviewed by a non-Claude model and the result is written to `codex-review.md`,
+   before the evaluator exists. Absent or unauthenticated codex → one line and the
+   round carries on.
+5. **Context reset.** `state.json` and `handoff.md` are written, then the evaluator is
    spawned as a new agent with no shared context. It is told file paths, never what
    the generator claims works.
-5. **Evaluate.** The evaluator drives the app through Playwright — clicking, typing,
-   dragging, resizing, tabbing, triggering empty and error states, reading console and
-   network — **then confirms every write outside the UI** with `curl` and a direct
-   datastore read, exercises the API's failure paths, and reads the code to locate the
-   cause of each failure. It writes `qa.md`, `verdict.json`, and screenshots.
-6. **Branch.** Pass → commit, next sprint. Fail → a fresh generator revises against
+6. **Evaluate.** The evaluator picks its verification mode from
+   `browserVerification`. In `browser` mode it drives the app through Playwright —
+   clicking, typing, dragging, resizing, tabbing, triggering empty and error states,
+   reading console and network. In every mode it **confirms every write outside the
+   UI** with `curl` and a direct datastore read, runs the project's test suite,
+   exercises the API's failure paths, and reads the code — including
+   `codex-review.md` — to locate the cause of each failure. It writes `qa.md`,
+   `verdict.json`, and screenshots.
+7. **Branch.** Pass → commit, next sprint. Fail → a fresh generator revises against
    the **blocking issues only**.
-7. **Stop rather than loop.** The run halts and asks you when revisions are exhausted,
+8. **Stop rather than loop.** The run halts and asks you when revisions are exhausted,
    when the same blocking issue recurs three times, when the evaluator runs degraded
    twice, or when `maxSprints` is reached.
-8. **Final assessment.** When the feature ordering is exhausted, a fresh evaluator
+9. **Final assessment.** When the feature ordering is exhausted, a fresh evaluator
    grades the whole product against `spec.md` with `SPEC-n` criteria it derives itself.
    Fail → a build round against the blocking issues, then re-assess. **The run is not
    done until this passes.**
 
-**With `useSprints: false` (the default)**, steps 1–2 and 6–7 disappear: a single
+**With `useSprints: false` (the default)**, steps 1–2 and 7–8 disappear: a single
 fresh generator gets `spec.md` and builds the whole product in one long coherent
-session, then the final assessment loop (step 8) runs rounds of QA and fixes to
+session, then the final assessment loop (step 9) runs rounds of QA and fixes to
 completion or to `maxFinalQaRounds`. This is not hypothetical — a real run against a
 10-item spec built the full product in one 72-minute generator session, then took
 three final-QA rounds to reach a clean pass (round 1 found a real state-desync bug;
@@ -300,18 +343,21 @@ sprint-mode final assessment would need.
 
 Six dimensions, each 0–5 with written behavioral anchors:
 
-| Dimension | Threshold | |
-| --- | --- | --- |
-| **Product depth** | ≥ 4 | is the feature real, or a facade |
-| **Design quality** | ≥ 4 | coherent whole, distinct mood and identity |
-| **Originality** | ≥ 4 | deliberate decisions, not library defaults |
-| **Functionality** | ≥ 4 | works end to end, including edge and error paths |
-| **Craft** | ≥ 3 | typography, spacing, states, contrast, responsiveness |
-| **Code quality** | ≥ 3 | boundaries, duplication, error handling, real tests |
+| Dimension | Threshold | | Headless |
+| --- | --- | --- | --- |
+| **Product depth** | ≥ 4 | is the feature real, or a facade | graded |
+| **Functionality** | ≥ 4 | works end to end, including edge and error paths | graded |
+| **Code quality** | ≥ 3 | boundaries, duplication, error handling, real tests | graded |
+| **Design quality** | ≥ 4 | coherent whole, distinct mood and identity | waived |
+| **Originality** | ≥ 4 | deliberate decisions, not library defaults | waived |
+| **Craft** | ≥ 3 | typography, spacing, states, contrast, responsiveness | waived |
 
-**Any one dimension below its threshold fails the sprint or the run, and the
-thresholds are the weighting** — depth, design and originality sit at 4 while craft
-and code quality sit at 3. There is no separate weighted score to compute or store.
+**Any one dimension below a threshold that applies fails the sprint or the run, and
+the thresholds are the weighting** — depth, design and originality sit at 4 while
+craft and code quality sit at 3. There is no separate weighted score to compute or
+store. The three waived in headless mode are the three that are judgements about a
+rendered interface; with no browser they score `null`, which never satisfies a
+threshold that does apply.
 
 A criterion that was not exercised is `not_verified`, never `pass`, and
 `not_verified` never counts toward a pass. Every blocking issue carries reproduction
@@ -323,13 +369,74 @@ polished artifact that scores low, a plain one that scores high, a build whose t
 all pass and whose depth is 2, and a codebase whose apparent discipline is the defect
 — are in `skills/qa-rubric/references/calibration-examples.md`.
 
-### If Playwright is unavailable
+### Verification modes
 
-The evaluator degrades to a clearly labelled reduced check: build succeeds, dev server
-starts, app responds, tests pass, API behaves under `curl`, datastore contains what a
-write should have produced, code quality gradeable. Every visual and interactive
-criterion is marked `not_verified`, unassessable dimensions are `null`, and a degraded
-run **never** returns `pass`. Two degraded runs in a row stop the loop.
+Every verdict records the mode it was produced in, and the mode decides what a
+`pass` is permitted to mean.
+
+| mode | when | what it grades | can pass |
+| --- | --- | --- | --- |
+| `browser` | `browserVerification: true`, Playwright answered | all six dimensions | yes |
+| `headless` | `browserVerification: false` | product depth, functionality, code quality | yes |
+| `degraded` | `browserVerification: true`, Playwright did **not** answer | whatever it could reach | **no** |
+
+The distinction between the last two is the whole design of the feature.
+**Headless is verification nobody asked for; degraded is verification somebody
+asked for and did not get.** A run never silently loses coverage it was configured
+to have: two degraded rounds in a row stop the loop, and a headless round never
+counts toward that, because nothing is broken.
+
+In `headless` mode the evaluator does not touch Playwright. It installs, builds,
+starts the app, runs the project's test suite, exercises every endpoint the round
+touches including its failure paths, confirms each write in the datastore and after
+a backend restart, and grades code quality by reading. Design, originality and
+craft are scored `null` — not zero, and not guessed from the stylesheet — and their
+thresholds are waived. Criteria that genuinely need a browser come back
+`not_verified` with `browserOnly: true`, and `/crystal-harness:status` reports how
+many, because that count is what tells you whether to re-run with the browser on.
+
+Waiving half the rubric is only safe if the other half was earned, so a headless
+pass additionally requires that something was actually executed (`apiVerified` or
+`testsVerified`), that at least one criterion passed, and that **every**
+`not_verified` criterion is a browser-only one — any other gap blocks the pass
+exactly as it would in browser mode. `scripts/validate_verdict.py` enforces all of
+it, along with the six thresholds themselves, and the orchestrator is told not to
+interpret a rejected verdict generously.
+
+What headless cannot catch, stated plainly: a control wired to nothing. The verb
+exists, the endpoint works, the row changes — and the button that was supposed to
+call it does not. That is the trade, and it is why the final assessment of anything
+you intend to ship should run with `browserVerification: true`.
+
+One thing the flag does *not* save: the plugin still registers Playwright MCP in
+`.mcp.json`, so the server still starts with your session. A plugin's MCP block has
+no conditionals. The saving is in the round — the evaluator's browser round-trips
+are what the time goes on, not the server's startup.
+
+### Independent review
+
+When the [`codex`](https://github.com/openai/codex-plugin-cc) plugin is installed
+and authenticated, the orchestrator runs a review of each round's diff after the
+generator finishes and before the evaluator is spawned, writing `codex-review.md`
+into the round directory.
+
+This exists because the evaluator, for all its separation from the generator, is
+still a Claude model reading a diff a Claude model wrote. A second opinion from a
+different vendor's model costs one CLI call and shares none of that prior.
+
+It is deliberately **not** a gate. The evaluator reads the file as one input to
+Code quality, treats every finding as a claim to confirm against the code, and
+records in `qa.md` which it confirmed and which it rejected. A finding it could not
+confirm never becomes a blocking issue, and nothing in the file can establish that
+a feature works — it is more reading, and reading is not verification. The verdict
+stays where it was.
+
+Detection is operational: the harness finds the plugin's `codex-companion.mjs` and
+asks it whether it is ready. Installed but not logged in counts as absent. On
+`"auto"` an absent codex is a one-line note and the round continues; set
+`codexReview: true` if you would rather hear about it, or `false` to never run it.
+Its wall time is recorded in the ledger like any other component, so it can be
+judged and stripped on evidence rather than taste.
 
 ## Resuming
 
@@ -374,7 +481,18 @@ no automatic signal for this, so ask the human if scope looks large. If you're
 evaluating a *newer* model than Opus 5 for the generator role, this is still the
 first thing to re-check, the same way it was checked here.
 
-**2. The evaluator on tasks the model already handles solo — `useEvaluator: false`.**
+**2. Browser verification — already off by default (`browserVerification: false`).**
+This one is not a model-capability bet, it is a cost one, and it is the only entry
+here where stripping *removes* coverage on purpose rather than because the
+coverage stopped being needed. The browser is the most expensive instrument in the
+harness and it is the only one that can catch a control wired to nothing; the API,
+the datastore and the test suite catch everything that makes a build wrong rather
+than wrong-looking. Off by default because most rounds are the second kind. *Signal
+to turn it back on:* the product's value is in the interface, a round's failures
+are clustering in surfaces rather than endpoints, or you are about to ship — the
+final assessment of anything real should see the interface at least once.
+
+**3. The evaluator on tasks the model already handles solo — `useEvaluator: false`.**
 Still on by default, and the evidence from the same run says it should stay on: the
 generator's own self-check pronounced its first fix correct, and only the evaluator
 caught that the fix had silently caused two new regressions. That is the exact
@@ -386,13 +504,13 @@ evaluator taking a large share while several consecutive verdicts come back `pas
 with no blocking issues, and the non-blocking issues it raises were already in the
 generator's report.
 
-**3. The planner.** Load-bearing longer than the other two, because under-scoping is
+**4. The planner.** Load-bearing longer than the other two, because under-scoping is
 a failure of what the prompt asked for, not of model capability. There is no flag —
 stop running `/crystal-harness:plan` and write `spec.md` yourself. *Signal:* you barely edit
 the spec, and a generator given the raw one-line idea produces the same feature list
 the planner would have.
 
-**4. The final assessment — keep it longest.** It is the only check graded against
+**5. The final assessment — keep it longest.** It is the only check graded against
 criteria the generator never helped write. Its cost is one evaluator pass per run in
 sprint mode; with sprints off it is however many rounds `maxFinalQaRounds` allows —
 the real run above needed three.
@@ -401,12 +519,12 @@ the real run above needed three.
 comparison — not just re-read this section — before trusting a default this plugin
 ships to change your own project's behavior.
 
-**5. The artifact protocol — keep it.** `handoff.md`, `state.json` and the file-based
+**6. The artifact protocol — keep it.** `handoff.md`, `state.json` and the file-based
 contract are not compensating for a model weakness. They are how a run survives a
 crash, a `/clear`, a new session, and a different machine. That does not expire with
 context length.
 
-**6. The rubric — keep it, and keep re-calibrating it.** What expires is the
+**7. The rubric — keep it, and keep re-calibrating it.** What expires is the
 calibration, not the mechanism: as baseline output quality rises, a 3 on Originality
 that was defensible becomes a 2. Re-read `calibration-examples.md` against your own
 recent output periodically and move the anchors.
@@ -448,7 +566,14 @@ crystal-harness/
 │       ├── SKILL.md                     # six dimensions, anchors, thresholds, verdict.json schema
 │       └── references/calibration-examples.md
 ├── hooks/hooks.json
-├── scripts/{guard_harness_artifacts.py, inject_harness_context.py}
+├── scripts/
+│   ├── guard_harness_artifacts.py       # the ownership policy the PreToolUse hook runs
+│   ├── inject_harness_context.py        # SessionStart notice when a run exists here
+│   ├── append_ledger.py                 # one ledger entry, stamped and written atomically
+│   ├── validate_verdict.py              # verdict.json schema + what a pass may mean per mode
+│   ├── codex_review.py                  # find the codex plugin, review the diff, write codex-review.md
+│   ├── test_guard.py
+│   └── test_validate_verdict.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -461,14 +586,23 @@ MIT.
 
 ```bash
 python3 crystal-harness/scripts/test_guard.py
+python3 crystal-harness/scripts/test_validate_verdict.py
 ```
 
-21 cases over the ownership guard: both denial policies, both escape routes
-(`..` traversal and a symlink planted inside `.harness/`), case-folding, the Bash
-path, every legitimate write, and both fail-closed paths. No framework and no
-dependencies.
+No framework and no dependencies.
 
-The guard is the only executable code in this plugin, and its failure mode is
-silent — if it stops denying, the harness keeps running and every verdict becomes
-self-awarded with no visible symptom. That is why it has a test and the prompts do
-not.
+**43 cases over the ownership guard**: both denial policies, the `codex-review.md`
+row that denies both agents, both escape routes (`..` traversal and a symlink
+planted inside `.harness/`), case-folding, the Bash path, every legitimate write,
+and both fail-closed paths.
+
+**32 cases over the verdict validator**: the schema, and every rule about what a
+`pass` may mean in each verification mode — the three dimensions headless must
+leave `null`, the conditions a headless pass has to buy that waiver with, the
+thresholds themselves, and the fact that a degraded round never passes.
+
+These two are tested and the prompts are not, because these two fail *silently*.
+If the guard stops denying, the harness keeps running and every verdict becomes
+self-awarded. If the validator stops rejecting, a round that measured nothing reads
+as a pass. Neither has a visible symptom; a prompt that drifts produces output
+somebody reads.

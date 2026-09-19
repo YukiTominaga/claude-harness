@@ -125,6 +125,14 @@ Rules:
 - Include at least one **non-functional** criterion the browser can see: a viewport
   width, a focus/hover/disabled state, a loading state, or "no uncaught console
   errors during the flow".
+- **Prefer the observable result over the gesture.** "When the user clicks Delete,
+  the row is gone from `GET /api/notes` and from the `notes` table" is checkable in
+  either verification mode; "when the user clicks Delete, the row disappears from
+  the list" is only checkable in a browser. Both are legitimate criteria and a
+  contract needs some of each — but a criterion phrased around the datastore result
+  keeps its evidence when `harness.browserVerification` is `false`, and one phrased
+  around the rendering does not. Write the gesture when the gesture is the point;
+  write the result when the result is.
 - **Depth, not just presence.** For each scope item, ask what verbs the domain
   implies — create, edit, delete, reorder, drag, undo — and write a criterion for
   each one in scope. A criterion that only asserts something renders will pass on a

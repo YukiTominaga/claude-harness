@@ -4,9 +4,14 @@
 The orchestrator must not interpret a malformed verdict generously, and asking
 a model to eyeball a JSON document against a schema is exactly the kind of
 check that silently degrades. This script is the qa-rubric skill's schema
-(draft 2020-12, schemaVersion 2) hand-rolled in stdlib Python so it needs no
+(draft 2020-12, schemaVersion 3) hand-rolled in stdlib Python so it needs no
 dependencies. Keep the two in sync: a schema change in the skill is not done
 until it is reflected here.
+
+It also enforces what a `pass` may mean in each verification mode. That part is
+load-bearing: `browserVerification: false` waives three of the six dimensions, so
+without a machine check, "headless" would be a way to get a pass by grading less.
+The rules below are the price of the mode existing.
 
 Usage:
     python3 validate_verdict.py .harness/sprints/03/verdict.json
@@ -20,19 +25,33 @@ import re
 import sys
 
 SCORE_KEYS = ("productDepth", "functionality", "design", "originality", "craft", "codeQuality")
+THRESHOLDS = {
+    "productDepth": 4,
+    "functionality": 4,
+    "design": 4,
+    "originality": 4,
+    "craft": 3,
+    "codeQuality": 3,
+}
+# Design, originality and craft are judgements about a rendered interface. With no
+# browser there is nothing to judge, so headless scores them null and waives their
+# thresholds rather than inviting a number derived from the stylesheet.
+WAIVED_IN_HEADLESS = ("design", "originality", "craft")
+MODES = ("browser", "headless", "degraded")
 TOP_REQUIRED = (
     "schemaVersion", "phase", "round", "overall", "scores", "criteria",
     "blockingIssues", "nonBlockingIssues", "environment", "evaluatedAt",
 )
 TOP_ALLOWED = set(TOP_REQUIRED) | {"$schema", "sprint"}
 CRITERION_REQUIRED = ("id", "text", "result")
-CRITERION_ALLOWED = set(CRITERION_REQUIRED) | {"evidence", "screenshot"}
+CRITERION_ALLOWED = set(CRITERION_REQUIRED) | {"evidence", "browserOnly", "screenshot"}
 ISSUE_REQUIRED = ("id", "summary", "repro", "observed", "expected", "cause")
 ISSUE_ALLOWED = set(ISSUE_REQUIRED) | {"criterionId", "dimension", "screenshot"}
 CAUSE_ALLOWED = {"file", "line", "mechanism"}
-ENV_REQUIRED = ("playwrightAvailable", "degraded")
+ENV_REQUIRED = ("verificationMode", "playwrightAvailable", "degraded")
 ENV_ALLOWED = set(ENV_REQUIRED) | {
     "degradedReason", "appUrl", "apiUrl", "apiVerified", "persistenceVerified",
+    "testsVerified", "codexReview",
 }
 
 errors = []
@@ -92,6 +111,105 @@ def check_issue(issue, path):
                 err(f"{path}.cause.line", "must be an integer or null")
 
 
+def check_mode_consistency(verdict, env, mode, criteria):
+    """What the schema cannot say: what a pass is allowed to mean in this mode.
+
+    Three modes, three different bargains. `browser` grades everything.
+    `headless` waives the three dimensions that need a rendered interface, and
+    pays for the waiver with the extra conditions below. `degraded` is a broken
+    environment wearing the browser configuration, and can never pass.
+    """
+    scores = verdict.get("scores") if isinstance(verdict.get("scores"), dict) else {}
+    criteria = criteria if isinstance(criteria, list) else []
+    passing = verdict.get("overall") == "pass"
+
+    # True in every mode, and checked even when the mode itself is unreadable: a
+    # verdict goes back for correction once, so it has to carry every fault.
+    if passing:
+        if verdict.get("blockingIssues"):
+            err("$.overall", "is pass but blockingIssues is non-empty")
+        if any(isinstance(c, dict) and c.get("result") == "fail" for c in criteria):
+            err("$.overall", "is pass but a criterion is marked fail")
+
+    if mode is None or not isinstance(env, dict):
+        return  # the shape errors already reported say why the rest cannot be judged
+
+    if (env.get("degraded") is True) != (mode == "degraded"):
+        err(
+            "$.environment.degraded",
+            f'must be true if and only if verificationMode is "degraded" (mode is "{mode}")',
+        )
+    if mode == "browser" and env.get("playwrightAvailable") is not True:
+        err(
+            "$.environment.playwrightAvailable",
+            'must be true in "browser" mode — that mode means Playwright answered',
+        )
+    if mode in ("headless", "degraded") and env.get("playwrightAvailable") is not False:
+        err("$.environment.playwrightAvailable", f'must be false in "{mode}" mode')
+
+    if mode == "headless":
+        for key in WAIVED_IN_HEADLESS:
+            if scores.get(key) is not None:
+                err(
+                    f"$.scores.{key}",
+                    'must be null in "headless" mode — it cannot be graded without a browser',
+                )
+        for i, criterion in enumerate(criteria):
+            if (
+                isinstance(criterion, dict)
+                and criterion.get("browserOnly") is True
+                and criterion.get("result") == "pass"
+            ):
+                err(
+                    f"$.criteria[{i}]",
+                    "is browserOnly but marked pass in headless mode — it cannot have been exercised",
+                )
+
+    if not passing:
+        return
+
+    if mode == "degraded":
+        err(
+            "$.overall",
+            'is pass but verificationMode is "degraded" — browser verification was '
+            "configured and did not work, so this round measured less than it was asked to",
+        )
+        return
+
+    for key in SCORE_KEYS:
+        if mode == "headless" and key in WAIVED_IN_HEADLESS:
+            continue
+        value = scores.get(key)
+        if not is_int(value):
+            err(f"$.scores.{key}", f'must be an integer to support a pass in "{mode}" mode')
+        elif value < THRESHOLDS[key]:
+            err(
+                f"$.scores.{key}",
+                f"is {value}, below its threshold of {THRESHOLDS[key]} — the verdict cannot be pass",
+            )
+
+    if mode == "headless":
+        if not (env.get("apiVerified") is True or env.get("testsVerified") is True):
+            err(
+                "$.overall",
+                "is pass in headless mode but neither apiVerified nor testsVerified is "
+                "true — nothing was executed, so nothing was verified",
+            )
+        if not any(isinstance(c, dict) and c.get("result") == "pass" for c in criteria):
+            err("$.overall", "is pass in headless mode but no criterion is marked pass")
+        for i, criterion in enumerate(criteria):
+            if (
+                isinstance(criterion, dict)
+                and criterion.get("result") == "not_verified"
+                and criterion.get("browserOnly") is not True
+            ):
+                err(
+                    f"$.criteria[{i}]",
+                    "is not_verified without browserOnly in a headless pass — only a "
+                    "browser-only gap is waived; any other gap blocks the pass",
+                )
+
+
 def main():
     if len(sys.argv) != 2:
         print("usage: validate_verdict.py <verdict.json>", file=sys.stderr)
@@ -110,8 +228,8 @@ def main():
 
     check_keys(verdict, "$", TOP_REQUIRED, TOP_ALLOWED)
 
-    if "schemaVersion" in verdict and verdict["schemaVersion"] != 2:
-        err("$.schemaVersion", "must be 2")
+    if "schemaVersion" in verdict and verdict["schemaVersion"] != 3:
+        err("$.schemaVersion", "must be 3")
     if "phase" in verdict and verdict["phase"] not in ("sprint", "final"):
         err("$.phase", 'must be "sprint" or "final"')
     sprint = verdict.get("sprint")
@@ -160,6 +278,8 @@ def main():
                     err(f"{path}.result", 'must be "pass", "fail" or "not_verified"')
                 if "evidence" in criterion and not isinstance(criterion["evidence"], str):
                     err(f"{path}.evidence", "must be a string")
+                if "browserOnly" in criterion and not isinstance(criterion["browserOnly"], bool):
+                    err(f"{path}.browserOnly", "must be a boolean")
                 check_str_or_null(criterion, "screenshot", path)
 
     for list_key in ("blockingIssues", "nonBlockingIssues"):
@@ -173,29 +293,29 @@ def main():
             check_issue(issue, f"$.{list_key}[{i}]")
 
     env = verdict.get("environment")
+    mode = None
     if "environment" in verdict:
         if not isinstance(env, dict):
             err("$.environment", "must be an object")
         else:
             check_keys(env, "$.environment", ENV_REQUIRED, ENV_ALLOWED)
-            for key in ("playwrightAvailable", "degraded", "apiVerified", "persistenceVerified"):
+            for key in (
+                "playwrightAvailable", "degraded", "apiVerified",
+                "persistenceVerified", "testsVerified",
+            ):
                 if key in env and not isinstance(env[key], bool):
                     err(f"$.environment.{key}", "must be a boolean")
             for key in ("degradedReason", "appUrl", "apiUrl"):
                 check_str_or_null(env, key, "$.environment")
+            if "codexReview" in env and env["codexReview"] not in ("confirmed", "present", "absent", None):
+                err("$.environment.codexReview", 'must be "confirmed", "present", "absent" or null')
+            if "verificationMode" in env:
+                if env["verificationMode"] not in MODES:
+                    err("$.environment.verificationMode", f"must be one of {MODES}")
+                else:
+                    mode = env["verificationMode"]
 
-    # Cross-field consistency the schema alone cannot express, but the loop
-    # depends on: a pass with blocking issues or failed criteria is a
-    # contradiction, and a degraded run never passes.
-    if verdict.get("overall") == "pass":
-        if verdict.get("blockingIssues"):
-            err("$.overall", "is pass but blockingIssues is non-empty")
-        if isinstance(criteria, list) and any(
-            isinstance(c, dict) and c.get("result") == "fail" for c in criteria
-        ):
-            err("$.overall", "is pass but a criterion is marked fail")
-        if isinstance(env, dict) and env.get("degraded") is True:
-            err("$.overall", "is pass but environment.degraded is true — a degraded run never passes")
+    check_mode_consistency(verdict, env, mode, criteria)
 
     if errors:
         for message in errors:

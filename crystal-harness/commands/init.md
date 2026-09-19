@@ -1,5 +1,5 @@
 ---
-description: Initialize a harness run in this directory — detect the stack, confirm config, create .harness/, verify git and Playwright MCP.
+description: Initialize a harness run in this directory — detect the stack, confirm config, create .harness/, and verify git plus whichever verification tools the config asks for.
 argument-hint: "[target-dir]"
 allowed-tools: Read, Write, Grep, Glob, Bash, Skill, mcp__plugin_crystal-harness_playwright__browser_navigate, mcp__plugin_crystal-harness_playwright__browser_close
 ---
@@ -75,6 +75,8 @@ The `harness` block, with these defaults, is part of what you show:
     "useEvaluator": true,
     "useSprints": false,
     "contextReset": true,
+    "browserVerification": false,
+    "codexReview": "auto",
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxFinalQaRounds": 5,
@@ -82,6 +84,27 @@ The `harness` block, with these defaults, is part of what you show:
   }
 }
 ```
+
+`browserVerification` defaults to `false`. Driving the app through Playwright is
+the single most expensive thing a QA round does, and most rounds do not need it:
+the API, the datastore and the project's own tests catch the defects that make a
+build wrong, while the browser catches the ones that make it *look* wrong. With it
+off, the evaluator runs in `headless` mode — design, originality and craft come
+back `null` and browser-only criteria come back `not_verified`, but the round still
+passes or fails on evidence.
+
+Turn it on for a run whose value is in the interface: anything where a facade would
+satisfy the API and fail the user, a visual redesign, or a final assessment you
+intend to ship from. **Say so when you show the config** if the project you detected
+has a frontend dev command, because that is exactly where the default costs the most
+coverage — and ask the human rather than flipping it yourself.
+
+`codexReview` defaults to `"auto"`: run an independent review of each round's diff
+with the `codex` plugin ([openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc))
+when it is installed and authenticated, and skip it silently when it is not. `true`
+makes a missing codex an error the human hears about; `false` never runs it. The
+review is recorded as `codex-review.md` in the round directory and read by the
+evaluator as one input to Code quality — it never decides a verdict.
 
 `useSprints` defaults to `false` (v2 mode) because `harness-generator` and
 `harness-evaluator` are pinned to `claude-opus-5` regardless of this config — a
@@ -125,11 +148,20 @@ Report each of these as a checked line, and do not paper over a failure:
 - **git** — `git rev-parse --is-inside-work-tree`. If not a repo, run `git init` and
   say so. If the repo is on `main`/`master`, create and switch to a work branch
   (`harness/<slug>`), because the loop commits continuously.
-- **Playwright MCP** — call `browser_navigate` against `about:blank`, then
-  `browser_close`. If it fails, report the exact error and tell the human the
-  evaluator will run in degraded mode (visual and interaction criteria will come
-  back `not_verified`, never `pass`) until it is fixed. Do not disable the evaluator
-  to work around it.
+- **Playwright MCP** — **only when `browserVerification` is `true`.** Call
+  `browser_navigate` against `about:blank`, then `browser_close`. If it fails,
+  report the exact error and tell the human the evaluator will run in degraded mode
+  (visual and interaction criteria will come back `not_verified`, never `pass`, and
+  two degraded rounds stop the loop) until it is fixed. Do not disable the evaluator
+  to work around it, and do not switch the config to `false` to make the error go
+  away — that converts a broken environment into a setting.
+  With `browserVerification: false`, skip this check and print one line saying the
+  run will grade in headless mode and what that does not cover.
+- **codex review** — only when `codexReview` is not `false`. Run
+  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codex_review.py" --check`, which probes
+  without reviewing anything. Exit 0 means each round gets an independent review;
+  exit 3 means the plugin is absent, unauthenticated or broken, which is fine on
+  `"auto"` — print the reason in one line and move on. Do not install anything.
 - **install command** — do not run it; just confirm the tool exists on PATH
   (`node`, `python3`, `uv`, whichever the config needs).
 

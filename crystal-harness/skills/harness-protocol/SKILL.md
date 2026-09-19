@@ -22,11 +22,12 @@ A fresh agent reading complete files does not.
 ├── state.json           # machine-readable run state, including the cost ledger
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only log of decisions and events
-├── artifacts/           # Playwright MCP scratch output (gitignored)
+├── artifacts/           # Playwright MCP scratch output, browser mode only (gitignored)
 ├── sprints/
 │   └── 01/
 │       ├── contract.md      # generator proposes, evaluator accepts
 │       ├── report.md        # generator's completion report + self-check
+│       ├── codex-review.md  # independent review of the diff, orchestrator-owned
 │       ├── qa.md            # evaluator verdict, human-readable
 │       ├── verdict.json     # evaluator verdict, machine-readable
 │       └── screenshots/
@@ -35,8 +36,13 @@ A fresh agent reading complete files does not.
         ├── qa.md
         ├── verdict.json
         ├── report.md        # generator's report for this round's fixes
+        ├── codex-review.md
         └── screenshots/
 ```
+
+`codex-review.md` is present only when the `codex` plugin is installed and
+`harness.codexReview` is not `false`; `screenshots/` only in `browser` mode. Their
+absence is normal and means what it says — nobody should infer a failure from it.
 
 Sprint and final-round directories are zero-padded two-digit. In `useSprints: false`
 mode `sprints/` stays empty: the run is planner → one long build → `final/01`,
@@ -54,6 +60,7 @@ assessment asks whether the product `spec.md` described actually exists.
 | `spec.md` | planner | generator, evaluator |
 | `sprints/NN/contract.md` | generator (proposal), evaluator (review block) | both |
 | `sprints/NN/report.md`, `final/NN/report.md` | generator | evaluator |
+| `*/codex-review.md` | the orchestrating command (via `scripts/codex_review.py`) | evaluator (read-only) |
 | `*/qa.md`, `*/verdict.json`, `*/screenshots/` | **evaluator only** | generator (read-only) |
 | `state.json`, `handoff.md`, `journal.md` | the orchestrating command | everyone |
 
@@ -63,6 +70,11 @@ the generator is blocked from verdict artifacts in both `sprints/NN/` and
 `final/NN/` and from the orchestrator-owned files (`state.json`, `handoff.md`,
 `journal.md`, `config.json`, `spec.md`); the evaluator is blocked from everything
 except its round artifacts, the contract review block, and `.harness/artifacts/`.
+
+`codex-review.md` is blocked for **both** of them, which is the only row where that
+is true. It is an independent review of the generator's diff, commissioned before
+the evaluator exists. A generator that can write it manufactures its own second
+opinion; an evaluator that can write it edits the evidence it is about to cite.
 
 ## `state.json`
 
@@ -128,14 +140,14 @@ JSON Schema (draft 2020-12):
     },
     "ledger": {
       "type": "array",
-      "description": "append-only, one entry per subagent invocation. This is the evidence for whether a component is still worth its cost.",
+      "description": "append-only, one entry per subagent invocation, plus one per codex review. This is the evidence for whether a component is still worth its cost. codex-review entries carry a duration and a null token count, because the cost is not reported back to the orchestrator.",
       "items": {
         "type": "object",
         "required": ["ts", "agent", "phase", "durationMs", "tokens"],
         "additionalProperties": false,
         "properties": {
           "ts": { "type": "string", "format": "date-time" },
-          "agent": { "enum": ["harness-planner", "harness-generator", "harness-evaluator"] },
+          "agent": { "enum": ["harness-planner", "harness-generator", "harness-evaluator", "codex-review"] },
           "phase": { "type": "string", "description": "the phase value at the time of the call" },
           "sprint": { "type": ["integer", "null"] },
           "round": { "type": ["integer", "null"] },

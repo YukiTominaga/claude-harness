@@ -24,12 +24,18 @@ Target, from `$1`:
 2. Write `.harness/handoff.md` before spawning. Even a standalone QA is a phase
    boundary; the handoff is what makes an interrupted run resumable.
 3. Spawn a **fresh `harness-evaluator`** with the file paths and the target
-   directory. Give it no summary of what the code does.
-4. Read the returned `verdict.json`, validate it against the `qa-rubric` schema — six
-   scores and a `cause` on every blocking issue — append a journal
-   entry, append the round to `state.json` (`sprints[].verdicts` or `finalRounds`),
-   and **append a `ledger` entry** with the evaluator's `duration_ms` and
-   `subagent_tokens` from the Agent result.
+   directory. Give it no summary of what the code does. It reads
+   `harness.browserVerification` itself and picks its verification mode from it —
+   do not tell it which mode to use, and do not override the config for one run
+   without saying so in the journal.
+4. Read the returned `verdict.json`, validate it with `validate_verdict.py` —
+   never by eye — append a journal entry, append the round to `state.json`
+   (`sprints[].verdicts` or `finalRounds`), and **append a `ledger` entry** with
+   the evaluator's `duration_ms` and `subagent_tokens` from the Agent result.
+
+This command does not commission a codex review; that belongs to the build loop,
+which knows which diff the round produced. If a `codex-review.md` is already in the
+target directory the evaluator will read it as usual.
 
 Do not change `phase` and do not mark anything `passed` here — a standalone QA is
 evidence, not a loop transition. If it passes and the human wants that recorded, they
@@ -40,8 +46,12 @@ output. Do not debug the application.
 
 ## Report
 
-Overall verdict; the six scores against their thresholds, with the previous round's
-for comparison; the pass / fail / not_verified counts; whether the API
-and persistence were verified outside the browser; and every blocking issue with its
-reproduction steps, cause, and screenshot path. If the evaluator ran degraded, say so
-first, before anything else.
+The verification mode first. Then the overall verdict; the six scores against the
+thresholds that applied, with the previous round's for comparison and waived
+dimensions named as waived; the pass / fail / not_verified counts, with browser-only
+gaps counted separately; whether the API, persistence and test suite were verified;
+and every blocking issue with its reproduction steps, cause, and screenshot path.
+
+If the evaluator ran `degraded`, say so before anything else — browser verification
+was asked for and not delivered, and nothing else in the report means what it
+usually means.

@@ -73,6 +73,11 @@ def cases(root):
         ("gen -> bash redirect into verdict", bash(gen, "echo x > .harness/sprints/01/verdict.json", root), DENY),
         ("gen -> bash redirect into handoff", bash(gen, "echo x >> .harness/handoff.md", root), DENY),
         ("gen -> bash naming state.json", bash(gen, "cat .harness/state.json", root), DENY),
+        # codex-review.md is an independent review of the generator's own diff.
+        # A generator that can write it can manufacture its own second opinion.
+        ("gen -> sprints codex-review.md", write(gen, ".harness/sprints/01/codex-review.md", root), DENY),
+        ("gen -> final codex-review.md", write(gen, ".harness/final/02/codex-review.md", root), DENY),
+        ("gen -> bash redirect into codex-review", bash(gen, "echo x > .harness/final/01/codex-review.md", root), DENY),
         # What the generator legitimately does.
         ("gen -> sprints report.md", write(gen, ".harness/sprints/01/report.md", root), ALLOW),
         ("gen -> final report.md", write(gen, ".harness/final/01/report.md", root), ALLOW),
@@ -91,6 +96,10 @@ def cases(root):
         ("eval -> sprints report.md", write(ev, ".harness/sprints/01/report.md", root), DENY),
         ("eval -> final report.md", write(ev, ".harness/final/01/report.md", root), DENY),
         ("eval -> stray note in .harness", write(ev, ".harness/notes.md", root), DENY),
+        # The evaluator weighs codex-review.md; editing it would be editing the
+        # evidence it is about to cite.
+        ("eval -> sprints codex-review.md", write(ev, ".harness/sprints/01/codex-review.md", root), DENY),
+        ("eval -> final codex-review.md", write(ev, ".harness/final/01/codex-review.md", root), DENY),
         # What the evaluator legitimately does.
         ("eval -> final verdict.json", write(ev, ".harness/final/01/verdict.json", root), ALLOW),
         ("eval -> sprints qa.md", write(ev, ".harness/sprints/01/qa.md", root), ALLOW),
@@ -99,6 +108,7 @@ def cases(root):
         ("eval -> playwright artifacts", write(ev, ".harness/artifacts/snap.png", root), ALLOW),
         ("eval -> bash dev server", bash(ev, "npm run dev", root), ALLOW),
         ("eval -> bash sqlite3 read", bash(ev, 'sqlite3 app.db "select count(*) from notes"', root), ALLOW),
+        ("eval -> bash reading codex-review", bash(ev, "cat .harness/sprints/01/codex-review.md", root), ALLOW),
         # Agents outside the harness are none of the guard's business.
         ("unrelated agent -> verdict.json", {"cwd": root, "tool_name": "Write", "tool_input": {"file_path": ".harness/sprints/01/verdict.json"}}, ALLOW),
         # Fail closed: an unevaluatable policy must not read as a satisfied one.
@@ -130,7 +140,7 @@ def main():
         if failures:
             print(f"{len(failures)} failing case(s): {', '.join(failures)}")
             return 1
-        print("all guard cases pass")
+        print(f"all {len(cases(root))} guard cases pass")
         return 0
     finally:
         shutil.rmtree(root, ignore_errors=True)

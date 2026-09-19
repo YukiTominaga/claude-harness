@@ -26,7 +26,11 @@ import os
 import sys
 import tempfile
 
-AGENTS = ("harness-planner", "harness-generator", "harness-evaluator")
+# codex-review is not a subagent, but it is a component with a cost, and the
+# ledger exists to answer "is this component still worth its cost". One exempt
+# from it is one nobody can decide to strip. It reports no token count, so its
+# entries carry duration only.
+AGENTS = ("harness-planner", "harness-generator", "harness-evaluator", "codex-review")
 
 
 def fail(message):
