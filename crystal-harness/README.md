@@ -603,9 +603,11 @@ and both fail-closed paths.
 leave `null`, the conditions a headless pass has to buy that waiver with, the
 thresholds themselves, and the fact that a degraded round never passes.
 
-**8 cases over the codex review helper**, against a fake companion so they need no
-Codex CLI: the exit-code contract in both directions — a failed codex run writes
-nothing and exits 1, and every non-zero outcome clears a leftover file from an
+**14 cases over the codex review helper**, against a fake companion so they need
+no Codex CLI: the exit-code contract in both directions. A run only counts as a
+review when the response carries a codex block, a status of exactly 0, and actual
+review content — a failed, empty, unparseable or version-skewed response writes
+nothing and exits 1 — and every non-zero outcome clears a leftover file from an
 earlier round before it can be read as this round's evidence.
 
 These three are tested and the prompts are not, because these three fail

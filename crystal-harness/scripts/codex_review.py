@@ -31,11 +31,13 @@ Exit codes:
     1  codex is available but the review could not be produced
 
 The exit code is the whole interface, so it has to mean exactly one thing:
-**--out holds a review of the current diff if and only if this exits 0.** Any
-other outcome removes the file first, including a leftover from an earlier
-round in the same directory — a revision reuses its round directory, and a
-review of the previous diff read as evidence about this one is worse than no
-review at all.
+**--out holds a real review of the current diff if and only if this exits 0.**
+Parsing is not evidence of a review — a failed, truncated or version-skewed
+companion still emits JSON — so the response must carry a codex block, a status
+of exactly 0, and actual review content before anything is written. Any other
+outcome removes the file first, including a leftover from an earlier round in
+the same directory: a revision reuses its round directory, and a review of the
+previous diff read as evidence about this one is worse than no review at all.
 
 With --required, an unavailable codex exits 1 instead of 3, for the
 `codexReview: true` configuration where a missing review is a real problem.
@@ -270,6 +272,42 @@ def render(payload, mode, reviewed_sha=None):
     return "\n".join(lines).rstrip() + "\n", None
 
 
+def unusable_reason(payload):
+    """Why this payload is not a review, or None if it is one.
+
+    A failed or truncated run still emits JSON on stdout, so parsing is not
+    evidence of a review. Anything short of a real one has to fail: the exit
+    code is the orchestrator's whole interface, and a file saying "Codex
+    produced no review text" would record an independent opinion the round
+    never got.
+
+    The checks mirror render()'s own branch exactly, so nothing can pass here
+    and then render as empty.
+    """
+    codex = payload.get("codex")
+    if not isinstance(codex, dict):
+        return "the response carried no codex block"
+
+    status = codex.get("status")
+    if not (isinstance(status, int) and not isinstance(status, bool) and status == 0):
+        stderr = str(codex.get("stderr") or "").strip()
+        detail = f": {first_error_line(stderr, status)}" if stderr else ""
+        return f"codex reported status {status!r}{detail}"
+
+    structured = payload.get("result")
+    if isinstance(structured, dict):
+        if not str(structured.get("summary") or "").strip():
+            return "the structured review carried no summary"
+        return None
+
+    parse_error = payload.get("parseError")
+    if parse_error:
+        return f"codex output could not be parsed ({parse_error})"
+    if not str(codex.get("stdout") or "").strip():
+        return "codex returned no review text"
+    return None
+
+
 def head_sha(cwd):
     """The commit this review is about, stamped into the file it produces.
 
@@ -374,14 +412,9 @@ def main():
         log("the codex review returned something other than an object")
         return 1
 
-    # A failed run still emits JSON on stdout, and its review text is empty or
-    # partial. Writing it anyway and exiting 0 would tell the orchestrator this
-    # round has an independent review when it has a placeholder.
-    status = (payload.get("codex") or {}).get("status")
-    if status not in (0, None):
-        stderr = ((payload.get("codex") or {}).get("stderr") or "").strip()
-        detail = f": {first_error_line(stderr, status)}" if stderr else ""
-        log(f"the codex review failed — codex exited with status {status}{detail}")
+    reason = unusable_reason(payload)
+    if reason:
+        log(f"the codex review is not usable: {reason}")
         return 1
 
     content, finding_count = render(payload, args.mode, head_sha(cwd))

@@ -44,12 +44,21 @@ READY = json.dumps({"ready": True})
 NOT_READY = json.dumps({"ready": False, "node": {"available": True}, "codex": {"available": False}})
 
 
-def payload(status=0, stdout="## Finding\\nSomething is wrong at src/a.ts:10."):
+def payload(status=0, stdout="## Finding\\nSomething is wrong at src/a.ts:10.", **extra):
     return json.dumps({
         "review": "Review",
         "target": {"label": "working tree"},
         "codex": {"status": status, "stderr": "" if status == 0 else "Error: codex run failed", "stdout": stdout},
+        **extra,
     })
+
+
+def structured(summary="Two issues.", **extra):
+    return payload(
+        stdout="raw model output",
+        result={"verdict": "needs-attention", "summary": summary, "findings": [], "next_steps": []},
+        **extra,
+    )
 
 
 def run(root, out, env_extra, args=()):
@@ -90,6 +99,39 @@ def cases():
         (
             "unparseable stdout exits 1",
             {"FAKE_SETUP": READY, "FAKE_REVIEW": "not json at all"},
+            (), 1, False,
+        ),
+        # Parsing is not evidence of a review. A response missing the codex
+        # block, or carrying one with nothing in it, used to render as
+        # "_Codex produced no review text._" and exit 0.
+        (
+            "a response with no codex block exits 1",
+            {"FAKE_SETUP": READY, "FAKE_REVIEW": json.dumps({"review": "Review", "target": {"label": "branch"}})},
+            (), 1, False,
+        ),
+        (
+            "status 0 with empty review text exits 1",
+            {"FAKE_SETUP": READY, "FAKE_REVIEW": payload(stdout="")},
+            (), 1, False,
+        ),
+        (
+            "a non-integer status exits 1",
+            {"FAKE_SETUP": READY, "FAKE_REVIEW": payload(status="ok")},
+            (), 1, False,
+        ),
+        (
+            "a structured review is written and exits 0",
+            {"FAKE_SETUP": READY, "FAKE_REVIEW": structured()},
+            (), 0, True,
+        ),
+        (
+            "a structured review with no summary exits 1",
+            {"FAKE_SETUP": READY, "FAKE_REVIEW": structured(summary="   ")},
+            (), 1, False,
+        ),
+        (
+            "a reported parse error exits 1",
+            {"FAKE_SETUP": READY, "FAKE_REVIEW": payload(parseError="schema mismatch")},
             (), 1, False,
         ),
         (
