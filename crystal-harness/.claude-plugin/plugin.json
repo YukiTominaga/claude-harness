@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "crystal-harness",
   "displayName": "Crystal Harness",
-  "description": "Multi-agent harness for long-running application development: separated generation and evaluation, operationalized QA rubric, context reset via file handoffs, and sprint contracts.",
-  "version": "0.7.0",
+  "description": "Multi-agent harness for long-running application development: separated generation and evaluation, an operationalized QA rubric with optional browser verification, context reset via file handoffs, sprint contracts, and optional independent review via the codex plugin.",
+  "version": "0.8.0",
   "author": {
     "name": "tominaga",
     "email": "tominaga@utaha.io"
@@ -15,6 +15,7 @@
     "evaluation",
     "qa",
     "long-running",
-    "playwright"
+    "playwright",
+    "codex"
   ]
 }

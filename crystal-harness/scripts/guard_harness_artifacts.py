@@ -11,7 +11,13 @@ harness-protocol skill. The design of the harness assumes two boundaries hold:
   round directories under .harness/sprints/ and .harness/final/ (where
   contract.md review blocks, qa.md, verdict.json and screenshots live) and the
   Playwright scratch area .harness/artifacts/. It may not write report.md —
-  that file is the generator's testimony — nor anything outside .harness/.
+  that file is the generator's testimony — nor codex-review.md, which is an
+  input it reads, not an artifact it authors — nor anything outside .harness/.
+
+codex-review.md belongs to neither of them. The orchestrator commissions it from
+a different vendor's model before the evaluator is spawned. A generator that can
+write it can manufacture its own second opinion; an evaluator that can write it
+can edit the evidence it is about to cite.
 
 Prompt instructions state these rules too; this hook is what makes them
 guarantees instead of requests. Fail closed: an event the policy cannot read is
@@ -25,6 +31,8 @@ import sys
 
 PROTECTED_LEAVES = ("qa.md", "verdict.json", "screenshots")
 ORCHESTRATOR_LEAVES = ("state.json", "handoff.md", "journal.md", "config.json", "spec.md")
+CODEX_REVIEW_LEAF = "codex-review.md"
+EVALUATOR_READ_ONLY_LEAVES = ("report.md", CODEX_REVIEW_LEAF)
 
 
 def allow():
@@ -90,6 +98,16 @@ def is_verdict_artifact(parts):
     )
 
 
+def is_codex_review(parts):
+    """.harness/{sprints,final}/NN/codex-review.md"""
+    return (
+        len(parts) == 4
+        and parts[0] == ".harness"
+        and parts[1] in ("sprints", "final")
+        and parts[3] == CODEX_REVIEW_LEAF
+    )
+
+
 def is_orchestrator_file(parts):
     """.harness/{state.json,handoff.md,journal.md,config.json,spec.md}"""
     return len(parts) == 2 and parts[0] == ".harness" and parts[1] in ORCHESTRATOR_LEAVES
@@ -101,14 +119,15 @@ def evaluator_may_write(parts):
     - .harness/artifacts/... — Playwright scratch output.
     - .harness/{sprints,final}/NN/... — its round artifacts, including the
       review block it appends to contract.md, but never report.md, which is
-      the generator's completion report.
+      the generator's completion report, and never codex-review.md, which is
+      an independent review it is supposed to weigh, not edit.
     """
     if not parts or parts[0] != ".harness":
         return False
     if len(parts) >= 3 and parts[1] == "artifacts":
         return True
     if len(parts) >= 4 and parts[1] in ("sprints", "final"):
-        return parts[3] != "report.md"
+        return parts[3] not in EVALUATOR_READ_ONLY_LEAVES
     return False
 
 
@@ -145,6 +164,12 @@ def main():
                 "shell. Only harness-evaluator produces verdicts; read them with "
                 "Read if you are revising."
             )
+        if CODEX_REVIEW_LEAF in lowered:
+            deny(
+                f"harness-generator may not touch {CODEX_REVIEW_LEAF} through the "
+                "shell. The orchestrating command commissions the independent "
+                "review; read it with Read if you need it."
+            )
         for leaf in ("state.json", "handoff.md", "journal.md"):
             if leaf in lowered:
                 deny(
@@ -172,6 +197,13 @@ def main():
                 "produces verdicts. Report what you built in report.md; the verdict is "
                 "not yours to write."
             )
+        if is_codex_review(parts):
+            deny(
+                f"harness-generator may not write {rel}. It is an independent review "
+                "of your own diff, commissioned by the orchestrating command. Writing "
+                "it yourself would make the second opinion your own. Read it if you "
+                "are revising."
+            )
         if is_orchestrator_file(parts):
             deny(
                 f"harness-generator may not write {rel}. The orchestrating command "
@@ -185,8 +217,8 @@ def main():
             "round artifacts under .harness/sprints/NN/ or .harness/final/NN/ "
             "(qa.md, verdict.json, screenshots, the contract review block) and "
             ".harness/artifacts/. It does not edit what it grades and does not "
-            "write report.md or the run state. Record defects as blocking issues "
-            "in qa.md instead."
+            "write report.md, codex-review.md, or the run state. Record defects as "
+            "blocking issues in qa.md instead."
         )
 
     allow()

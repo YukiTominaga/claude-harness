@@ -61,6 +61,54 @@ This is not bookkeeping. The recurring judgement this harness exists to support 
 *is this component still worth its cost*, and the ledger is the only place that
 question can be answered from evidence rather than impression.
 
+## The codex review step
+
+Read `harness.codexReview`. When it is `"auto"` (the default) or `true`, run an
+independent review of the round's diff after the generator finishes and **before**
+the evaluator is spawned, so the evaluator finds it as one more file in its round
+directory:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codex_review.py" \
+  --out .harness/sprints/NN/codex-review.md \
+  --scope branch --base <the commit the round started from> \
+  [--required]
+```
+
+The base is the commit this round started from: the previous sprint's `commit` for
+a sprint, the previous final round's `commit` for a final round, and
+`lastGoodCommit` when neither exists. Getting it wrong makes codex review the wrong
+diff, which is worse than not running it — check it against `git log --oneline`
+before you run.
+
+Exit codes are the whole interface, and they mean exactly one thing:
+**`codex-review.md` holds a review of this round's diff if and only if the script
+exits 0.** On any other outcome it removes the file first, including a leftover
+from an earlier round in the same directory — so you never have to reason about
+whether the file you see belongs to this round.
+
+**0** — written; journal it and carry on. **3** — the codex plugin is not
+installed, not authenticated, or broken; this is not a failure. Say one line about
+it and continue to the evaluator. **1** — codex was available and the review
+failed; journal the reason and continue to the evaluator anyway. A missing second
+opinion never blocks a round, because the evaluator, not codex, decides the
+verdict.
+
+Pass `--required` only when `harness.codexReview` is `true`, which turns an
+unavailable codex into exit 1 for a human who wants to know it did not run.
+
+This step is skipped entirely when `harness.codexReview` is `false`.
+
+Append a ledger entry for it like any other component — `--agent codex-review`,
+with `--duration-ms` measured and no `--tokens`, because the cost is not reported
+back to you. The point of the ledger is to make "is this component still worth its
+cost" answerable, and a component exempt from it is a component nobody can strip.
+
+Do not read `codex-review.md` yourself, do not summarise it to the evaluator, and
+do not act on its findings. It is the evaluator's input. An orchestrator that
+relays review findings into the generator has just made the generator revise
+against an ungraded opinion.
+
 ## Mode selection
 
 Read `harness.useSprints`.
@@ -112,7 +160,12 @@ If it reports a failing build or failing tests it could not fix, do not proceed 
 evaluation — that spends a whole cycle re-discovering a known fact. Go straight to
 revision, or escalate if revisions are exhausted.
 
-### 4. Context reset — mandatory
+### 4. Codex review
+
+Run the codex review step described above against the sprint's diff, writing
+`.harness/sprints/NN/codex-review.md`. Skip it on exit 3 and carry on.
+
+### 5. Context reset — mandatory
 
 Before the evaluator runs:
 
@@ -129,12 +182,14 @@ works. It gets file paths and the running app; that is the entire point.
 If `harness.contextReset` is `false`, skip only the fresh-agent part — the handoff is
 still written, because it is what makes the run resumable.
 
-### 5. Evaluate
+### 6. Evaluate
 
 Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the contract,
-`report.md`, and the sprint directory. It drives the app through Playwright, verifies
-the API and datastore directly, locates the cause of each failure in the code, and
-writes `qa.md`, `verdict.json`, and screenshots.
+`report.md`, and the sprint directory. It reads `harness.browserVerification` to
+decide its verification mode, exercises the app through that mode — the browser via
+Playwright when enabled, the API, datastore and test suite in every mode — locates
+the cause of each failure in the code, and writes `qa.md`, `verdict.json`, and
+screenshots.
 
 Validate the verdict with the plugin's checker — do not eyeball it against the
 schema yourself:
@@ -143,15 +198,19 @@ schema yourself:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_verdict.py" .harness/sprints/NN/verdict.json
 ```
 
-It checks the full `qa-rubric` schema plus the consistency rules (a pass with
-blocking issues, failed criteria, or `degraded: true` is a contradiction). If it
-prints violations, send the verdict back once for correction with that exact list;
-a malformed verdict must not be interpreted generously.
+It checks the full `qa-rubric` schema plus the consistency rules: a pass with
+blocking issues, failed criteria, a below-threshold score, or a `degraded` mode is
+a contradiction, and a `headless` pass has to meet the extra conditions the rubric
+sets for one. If it prints violations, send the verdict back once for correction
+with that exact list; a malformed verdict must not be interpreted generously.
 
 Append the round to the sprint's `verdicts` array in `state.json` so the trend is
-visible later.
+visible later, copying `environment.verificationMode` into the summary along with
+the scores. That copy is not optional bookkeeping: the next round overwrites this
+round's `verdict.json` and `qa.md` in place, so a mode left uncopied is gone, and
+both the mixed-mode warning and the stopping rule below have nothing to read.
 
-### 6. Branch on the verdict
+### 7. Branch on the verdict
 
 **Pass** — commit the sprint artifacts, mark the sprint `passed`, record the commit,
 clear `repeatedIssueFingerprints`, write the handoff, journal it, and move to the
@@ -165,9 +224,10 @@ Then spawn a **fresh `harness-generator`** with `verdict.json` and the instructi
 work the **blocking issues only**. When an issue is at recurrence ≥ 2, instruct it
 explicitly that a patch has already failed and it must change approach — for Design,
 Originality and Product depth issues, that means replacing the approach, not refining
-it. Return to step 4.
+it. Return to step 4 — a revision gets its own codex review, because the diff it
+produced is the one nobody has looked at.
 
-### 7. Stopping rules — these are not advisory
+### 8. Stopping rules — these are not advisory
 
 Stop, set `phase: "blocked"`, write `blockedReason`, journal it, and ask the human,
 whenever any of these holds:
@@ -176,8 +236,13 @@ whenever any of these holds:
 - Any `repeatedIssueFingerprints[id] >= 3` — three verdicts, same defect. Not two:
   the round that finally clears a design or depth issue is often the one that scraps
   the previous approach, and cutting that off at two is how a run stops just short.
-- The evaluator returns `degraded: true` twice in a row. The harness is not measuring
-  anything; fix the environment before spending more rounds.
+- The last two `verificationMode` values in the sprint's `verdicts` array are both
+  `degraded`. Browser verification was configured and did not work; the harness is
+  not measuring what it was told to measure, so fix the environment before spending
+  more rounds. Read this from the summaries, not from `verdict.json` — the previous
+  round's file has already been overwritten. A `headless` verdict is **not** a
+  degraded one and never counts toward this rule: nothing is broken when nobody
+  asked for a browser.
 - `maxSprints` reached — note this stops the sprint loop, and ask whether to run the
   final assessment on what exists.
 - The generator reports a blocking issue it could not reproduce twice in a row.
@@ -200,16 +265,20 @@ in v2 mode immediately after the single build.
 For round `NN` starting at 01:
 
 1. Set `phase: "final-qa"`. Write the handoff and journal the transition.
-2. Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the running
+2. Run the codex review step against this round's diff, writing
+   `.harness/final/NN/codex-review.md`. On round 01 in v2 mode the base is the
+   commit the single build started from; on later rounds it is the previous
+   round's `commit`.
+3. Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the running
    app, and `.harness/final/NN/`. It derives `SPEC-n` criteria from the spec itself —
    there is no contract to negotiate, which is the point.
-3. Validate the verdict with `validate_verdict.py` as in the sprint loop; append to
-   `finalRounds`.
-4. **Pass** → commit, set `phase: "done"`, write the final handoff, and report.
+4. Validate the verdict with `validate_verdict.py` as in the sprint loop; append to
+   `finalRounds`, copying `verificationMode` into the summary as above.
+5. **Pass** → commit, set `phase: "done"`, write the final handoff, and report.
    **Fail** → set `phase: "final-building"`, spawn a fresh generator against the
    blocking issues only, which writes `.harness/final/NN/report.md`; then increment
    the round and return to step 1.
-5. Stop and ask the human when rounds would exceed `harness.maxFinalQaRounds`, or
+6. Stop and ask the human when rounds would exceed `harness.maxFinalQaRounds`, or
    when a blocking issue hits the same recurrence limits as above.
 
 ## Between phases
@@ -220,7 +289,11 @@ committed. A run that crashes must be resumable from those files alone.
 
 ## Report as you go
 
-After each sprint and each final round print a short block: the number, verdict, six
-scores with the previous round's for comparison, blocking
-issue count, tokens and duration for that round, and what comes next. Do not
-editorialize about progress.
+After each sprint and each final round print a short block: the number, verdict,
+verification mode, six scores with the previous round's for comparison (waived ones
+shown as waived, not as a number), blocking issue count, whether a codex review ran,
+tokens and duration for that round, and what comes next. Do not editorialize about
+progress.
+
+Say the mode every time. A reader scanning a run of passes needs to see at a glance
+which of them looked at the interface and which did not.
