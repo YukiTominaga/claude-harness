@@ -239,8 +239,8 @@ apply only to a greenfield directory. **It never invents a dev command** — amb
 detection is a question, not a guess.
 
 `useSprints` defaults to `false` because the generator and evaluator are pinned to
-`claude-opus-5` (see below) regardless of this config — per-sprint decomposition
-was a safety net for models that lost coherence over long sessions, and Opus 5
+`claude-opus-5-5` (see below) regardless of this config — per-sprint decomposition
+was a safety net for models that lost coherence over long sessions, and Opus 5.5
 doesn't need it. Set it to `true` for a spec large or tightly-coupled enough that
 reviewing it in small, evaluated increments beats one long build plus a converging
 tail of final-QA rounds — there's no automatic signal for this, so ask if scope
@@ -275,14 +275,14 @@ revisit when a new model lands:
 
 | Agent | Model | Effort | Why |
 | --- | --- | --- | --- |
-| `harness-planner` | `claude-sonnet-5` | `high` | Structured expansion of an idea into a spec |
-| `harness-generator` | `claude-opus-5` | `xhigh` | Long-horizon coherence and hard implementation |
-| `harness-evaluator` | `claude-opus-5` | `high` | Design and depth judgement, not just criterion matching |
+| `harness-planner` | `claude-opus-5-5` | `high` | Structured expansion of an idea into a spec |
+| `harness-generator` | `claude-opus-5-5` | `xhigh` | Long-horizon coherence and hard implementation |
+| `harness-evaluator` | `claude-opus-5-5` | `high` | Design and depth judgement, not just criterion matching |
 
-**Effort is the cost lever, not model tier.** Sonnet 5 is ~40% cheaper than Opus 5
-per token (~60% at the introductory rate through 2026-08-31), while dropping the
-generator from `xhigh` to `medium` moves far more. Sweep effort against your own
-output before reaching for a cheaper model.
+**Effort is the cost lever, not model tier.** All three agents run Opus 5.5; dropping
+the generator from `xhigh` to `medium` moves cost far more than switching an agent to
+a cheaper model such as Sonnet 5. Sweep effort against your own output before
+reaching for a cheaper model.
 
 ## How the loop works
 
@@ -460,7 +460,7 @@ contains superseded decisions.
 Every component here encodes an assumption about what the model cannot do alone, and
 those assumptions expire. In the source post's own v2, the sprint construct became
 unnecessary once the model could sustain 2+ hour coherent sessions — this plugin's
-generator and evaluator are pinned to `claude-opus-5`, a model in that class, so the
+generator and evaluator are pinned to `claude-opus-5-5`, a model in that class, so the
 default configuration already reflects that stripping. What follows is what's already
 stripped, what still isn't, and the evidence for each — not a to-do list.
 
@@ -470,7 +470,7 @@ When a future model lands, remove one component at a time and compare the next r
 final assessment against the last, the same way the change below was made.
 
 **1. Sprints — already off by default (`useSprints: false`).** Sprints exist to bound
-a session to what the model can hold coherently; Opus 5 doesn't need that bound. This
+a session to what the model can hold coherently; Opus 5.5 doesn't need that bound. This
 isn't a guess: a real run against a 10-item spec built the whole product in one
 72-minute session and reached a clean final-QA pass in three rounds — cheaper and
 faster than the sprint-mode equivalent for the same spec (one sprint alone ran
@@ -478,7 +478,7 @@ $20.13; the full v2 run, all 10 items to a pass, ran $44.18). Set `useSprints: t
 when a spec is large or tightly-coupled enough that small, reviewed-as-you-go
 increments beat one long build plus a converging tail of final-QA rounds — there is
 no automatic signal for this, so ask the human if scope looks large. If you're
-evaluating a *newer* model than Opus 5 for the generator role, this is still the
+evaluating a *newer* model than Opus 5.5 for the generator role, this is still the
 first thing to re-check, the same way it was checked here.
 
 **2. Browser verification — already off by default (`browserVerification: false`).**

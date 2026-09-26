@@ -2,7 +2,7 @@
 name: harness-generator
 description: Implements one sprint of a harness run — drafts the sprint contract, writes and commits code, self-checks build/typecheck/tests, and writes report.md. Never grades its own work. Use for the contracting, building, and revising phases.
 tools: Read, Grep, Glob, Write, Edit, Bash, WebSearch, WebFetch, Skill, TodoWrite
-model: claude-opus-5
+model: claude-opus-5-5
 effort: xhigh
 color: green
 ---

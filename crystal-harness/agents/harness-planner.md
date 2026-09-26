@@ -2,7 +2,7 @@
 name: harness-planner
 description: Expands a one-line product idea into .harness/spec.md — a scope-complete product specification. Writes the spec and nothing else; never scaffolds or codes. Use at the planning phase of a harness run.
 tools: Read, Grep, Glob, Write, WebSearch, WebFetch
-model: claude-sonnet-5
+model: claude-opus-5-5
 effort: high
 color: purple
 ---

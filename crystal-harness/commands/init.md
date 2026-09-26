@@ -107,11 +107,11 @@ review is recorded as `codex-review.md` in the round directory and read by the
 evaluator as one input to Code quality — it never decides a verdict.
 
 `useSprints` defaults to `false` (v2 mode) because `harness-generator` and
-`harness-evaluator` are pinned to `claude-opus-5` regardless of this config — a
+`harness-evaluator` are pinned to `claude-opus-5-5` regardless of this config — a
 model capable enough that per-sprint decomposition is measured overhead, not a
 safety net it needs. Set it to `true` if the human wants the smaller,
 reviewed-as-you-go increments instead — a larger or more tightly-coupled spec than
-a single Opus 5 session comfortably holds is the signal to do that, and there is no
+a single Opus 5.5 session comfortably holds is the signal to do that, and there is no
 way to detect that signal automatically, so ask if scope looks large.
 
 `maxFinalQaRounds` defaults to 5, not 3, specifically because `useSprints: false`
