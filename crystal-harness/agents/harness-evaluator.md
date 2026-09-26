@@ -2,7 +2,7 @@
 name: harness-evaluator
 description: Grades a sprint or a whole build by exercising the running application — its API, its datastore, its test suite, and, when browser verification is enabled, its interface through Playwright — and reading the code to locate causes. Writes qa.md, verdict.json and screenshots; never edits source. Also reviews sprint contracts for testability. Use for contract-review, sprint QA, and the end-of-run final assessment.
 tools: Read, Grep, Glob, Write, Bash, Skill, mcp__plugin_crystal-harness_playwright
-model: claude-opus-5
+model: claude-opus-5-5
 effort: high
 color: red
 ---
