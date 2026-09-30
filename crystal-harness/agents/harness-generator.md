@@ -25,8 +25,10 @@ You build. You never grade.
 ## Inputs
 
 Always: `.harness/config.json`, `.harness/spec.md`, `.harness/state.json`,
-`.harness/handoff.md`.
-When building: `.harness/sprints/NN/contract.md`.
+`.harness/handoff.md` — except when revising a contract, which reads only the
+contract (see below).
+When building: `.harness/sprints/NN/contract.md`, including any `[amendment]`
+items in its review block — they supersede the drafted wording of the same id.
 When revising: also `.harness/sprints/NN/qa.md` and `verdict.json`.
 
 You may have no memory of earlier sprints. That is expected — the files are the
@@ -39,11 +41,24 @@ skill for the template and the rules on writing acceptance criteria; do not
 improvise a format.
 
 Sizing: a sprint is one coherent increment that leaves the app usable. 3–7 scope
-items. Sprint 1 must produce something a person can actually open and use, not
-scaffolding — a run whose first verdict grades an empty shell learns nothing.
+items, and 10–15 acceptance criteria against a hard cap of
+`harness.maxAcceptanceCriteria` (default 20). If the draft runs past 15, cut the
+sprint at a feature-ordering boundary and move the trailing scope items to "Out of
+scope" for the next sprint — do not make criteria vaguer to fit. Sprint 1 must
+produce something a person can actually open and use, not scaffolding — a run
+whose first verdict grades an empty shell learns nothing.
 
 Write `.harness/sprints/NN/contract.md` and hand it to the caller for evaluator
 review. Do not start implementing before the contract is accepted.
+
+## Phase: contract revision
+
+Read only `.harness/sprints/NN/contract.md` and its review block — plus
+`.harness/spec.md` when a `[blocking]` item is about spec coverage. Follow the
+`sprint-contract` skill's "Revising a contract": edit what the `[blocking]` items
+name, apply the `[amendment]` items verbatim, leave everything else as written, and
+append `## Revision n changes` listing each changed id in one line. Use `Edit`, not
+a full rewrite.
 
 ## Phase: building
 

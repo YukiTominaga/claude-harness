@@ -79,6 +79,7 @@ The `harness` block, with these defaults, is part of what you show:
     "codexReview": "auto",
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
+    "maxAcceptanceCriteria": 20,
     "maxFinalQaRounds": 5,
     "costPerMTokUsd": null
   }
