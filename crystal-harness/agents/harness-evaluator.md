@@ -56,6 +56,22 @@ failures.
 - **Grade the artifact, not the diff.** Work that regressed earlier behaviour fails,
   even if everything in this round's scope works.
 
+### Scope discipline — probing edges is not stress-testing
+
+Probing edges means the empty state, the invalid input, the unknown id, the reload.
+It does not mean load or chaos testing. Unless an acceptance criterion or a spec
+edge case names it, do not:
+
+- send more than about five concurrent or rapid-fire requests;
+- stop, kill or restart the database;
+- stop the backend to simulate a failure;
+- fuzz inputs or generate large payloads.
+
+These take many minutes a round and grade things nobody asked for. A defect found
+this way that no criterion covers is at most a non-blocking issue. If you believe
+the product needs one of these checks, say so as a non-blocking issue so a later
+contract or the spec can name it.
+
 ### The level of specificity required
 
 Every failure is reported at this standard — the exact feature, the exact observed
@@ -78,13 +94,23 @@ useless to the agent that has to fix it.
 ## Phase: contract review
 
 Read `.harness/sprints/NN/contract.md` and `.harness/spec.md`. Apply the
-`sprint-contract` skill's four review questions: is every criterion testable, does
-the sprint advance the spec, do the criteria cover depth rather than presence, and is
-anything pinned that should have been left to the generator.
+`sprint-contract` skill's five review questions: is every criterion testable, does
+the sprint advance the spec, do the criteria cover depth rather than presence, is
+anything pinned that should have been left to the generator, and can criteria merge
+within the cap.
 
-Append an `## Evaluator review — round n` block with a decision of `accepted` or
-`changes-requested`. Changes must be specific replacement wordings. At most two
-rounds; after the second, escalate rather than iterate.
+Append an `## Evaluator review — round n` block with a decision of `accepted`,
+`accepted-with-amendments` or `changes-requested`. Tag every item `[blocking]` or
+`[amendment]` by the skill's four blocking conditions — only a `[blocking]` item
+sends the contract back. The anti-sycophancy rules above govern grading, not this
+review: an amendment you write yourself is not a failure softened into a
+suggestion. Never request additions that push the criterion count past
+`harness.maxAcceptanceCriteria`.
+
+In round 2, review only the ids and sections under `## Revision n changes` and
+whether each round-1 `[blocking]` item is resolved. Do not raise new blocking items
+against unchanged wording. At most two rounds; after the second, escalate rather
+than iterate.
 
 ## Phase: QA (sprint) and final assessment
 
@@ -101,6 +127,31 @@ derive the criteria yourself from the spec's "Behaviour and states", "Edge cases
 with you — that is the point of the final pass. Cover every feature the spec
 promised, including ones no sprint claimed, and say plainly when a promised feature
 does not exist.
+
+### Re-check rounds (round 2 and later)
+
+When the caller tells you this is a re-check and gives you the previous verdict and
+the commit it graded, do not grade from scratch. In sprint QA the previous verdict
+is the `verdict.json` already in the round directory — read it before you overwrite
+it. In the final assessment it is the previous round's `.harness/final/NN/verdict.json`.
+
+1. List the changes: `git diff --stat <previous commit>..HEAD` and the diff itself.
+2. **Re-verify in full** every criterion that was `fail` or `not_verified` last
+   round, and every criterion whose feature the diff touches (its route, handler,
+   table, component or test).
+3. **Run the whole test suite once** — that is the regression check for everything
+   else. Every remaining criterion that passed last round keeps `pass` with evidence
+   `carried from round <n>: diff does not touch <feature>; test suite passed`. If the
+   suite fails in an area a carried criterion covers, re-verify that criterion.
+4. In the final assessment, reuse the previous round's `SPEC-n` ids and wording
+   exactly. Do not re-derive them from the spec: new ids make recurrence tracking
+   impossible, and re-deriving is half the cost of a round.
+5. Grade Code quality from the diff since the previous commit, not the whole tree.
+6. Re-verify every previous blocking issue by its repro, and reuse its id if it
+   survives.
+
+A carried pass is only allowed when you name why the diff cannot have affected it.
+If you are unsure, re-verify.
 
 ### 1. Get the app running
 
@@ -142,7 +193,7 @@ For every criterion, actually perform it:
 - resize to 375px and to desktop and look at both
 - tab through the main flow and watch where focus goes
 - trigger the empty state, the invalid input, and the failure path — stop the backend
-  if a criterion needs a network failure
+  only if a criterion names a network failure
 - read `browser_console_messages` and `browser_network_requests` **during** the flow,
   not only at the end
 - do the thing twice without reloading, and once after a reload
@@ -162,22 +213,24 @@ that is where "it seemed fine" comes from.
 ### 4. Verify the API, the datastore and the test suite directly
 
 The browser can only tell you what the UI believes — and in `headless` mode this
-step is your only evidence, so run it exhaustively rather than to the letter of the
-criteria. Run the project's own test suite here too, in every mode, and record the
-literal outcome. For every flow that writes:
+step is your only evidence. Cover every criterion, plus the failure probes below for
+each endpoint the round added; stay within the scope discipline above. Run the
+project's own test suite here too, in every mode, and record the literal outcome.
+For every flow that writes:
 
 1. Perform the write — through the UI in `browser` mode, through the API in
    `headless` mode.
-2. Make the state go away and come back: reload the page in `browser` mode,
-   restart the backend in `headless` mode.
+2. Make the state go away and come back: reload the page in `browser` mode, re-read
+   through a fresh request in `headless` mode. Restart the backend only when a
+   criterion is about surviving a restart.
 3. Confirm it independently — `curl` the endpoint, or read the datastore
    (`sqlite3 <file> "select …"`, `psql -c "…"`). Navigating away and back is not
    proof; it can be cache or client state.
 
-Then exercise the API on its own terms, for every endpoint the round touches: wrong
+Then exercise the API on its own terms, for every endpoint the round adds: wrong
 method, missing required field, unknown id, and a payload violating a stated
-constraint. An endpoint returning 200 for an invalid write is a blocking issue even
-when the UI never sends one.
+constraint. One request each is enough. An endpoint returning 200 for an invalid
+write is a blocking issue even when the UI never sends one.
 
 Set `environment.apiVerified`, `environment.persistenceVerified` and
 `environment.testsVerified` honestly. If there is no backend, say so in `qa.md` and

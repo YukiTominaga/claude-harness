@@ -135,8 +135,23 @@ ordering is **not** the end of the run.
 ### 1. Contract
 
 Set `phase: "contracting"`. Spawn a **fresh `harness-generator`** with the sprint
-index and the paths to `config.json`, `spec.md`, and all prior `verdict.json` files.
-It writes `.harness/sprints/NN/contract.md`.
+index and the paths to `config.json`, `spec.md`, and the previous sprint's
+`verdict.json` (its non-blocking issues are the ones a new sprint may pick up;
+older verdicts are already summarised in `state.json`). It writes
+`.harness/sprints/NN/contract.md`.
+
+Check the contract's shape before anyone reviews it:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_contract.py" .harness/sprints/NN/contract.md
+```
+
+It enforces the criterion cap (`harness.maxAcceptanceCriteria`, default 20), 3–7
+scope items and unique ids. If it prints violations, send the contract back once to
+a fresh generator in the contract-revision phase with that exact list and the
+instruction to move trailing scope items to "Out of scope" rather than compress
+criteria. If the second attempt still fails, escalate. Never spend an evaluator on
+a contract that fails this check.
 
 ### 2. Contract review
 
@@ -144,11 +159,20 @@ Spawn a **fresh `harness-evaluator`** with the contract and the spec. It appends
 review block.
 
 - `accepted` → continue.
-- `changes-requested` → hand the review back to a fresh generator. **At most two
+- `accepted-with-amendments` → continue. The amendments in the review block are
+  part of the contract; the building generator and the QA evaluator both read them.
+- `changes-requested` → spawn a fresh generator in the **contract-revision** phase
+  with only `contract.md` — no prior verdicts or handoff, and `spec.md` only when a
+  `[blocking]` item is about spec coverage. It edits what the
+  `[blocking]` items name and appends `## Revision n changes`. Re-run
+  `validate_contract.py`, then spawn a fresh evaluator for round 2, telling it to
+  review only the listed changes and the round-1 blocking items. **At most two
   rounds.** If round 2 still requests changes, escalate: print both drafts and the
   outstanding disagreement, log it, set `phase: "blocked"`, and stop.
 
-Journal the decision and reason each round.
+Run `validate_contract.py` again after every review round too — an amendment must
+not take the contract past the cap. Journal the decision and reason each round, and
+set the sprint's `contractRounds`.
 
 ### 3. Implement
 
@@ -169,7 +193,9 @@ Run the codex review step described above against the sprint's diff, writing
 
 Before the evaluator runs:
 
-1. Update `state.json` (`phase: "qa"`, sprint status `qa`, `lastGoodCommit` = HEAD).
+1. Note the current `lastGoodCommit` — on a revision round it is the commit the
+   previous QA round graded, and step 6 needs it. Then update `state.json`
+   (`phase: "qa"`, sprint status `qa`, `lastGoodCommit` = HEAD).
 2. Rewrite `.harness/handoff.md` in full, using the `harness-protocol` template.
    "Done" contains only work the generator verified. "Approaches already tried and
    rejected" carries forward from every prior round of this sprint.
@@ -190,6 +216,14 @@ decide its verification mode, exercises the app through that mode — the browse
 Playwright when enabled, the API, datastore and test suite in every mode — locates
 the cause of each failure in the code, and writes `qa.md`, `verdict.json`, and
 screenshots.
+
+On a revision round, tell it this is a **re-check**, and give it the commit the
+previous round graded (noted in step 5). The previous `verdict.json` is still in
+the sprint directory until the evaluator overwrites it; the evaluator reads it
+first. It re-verifies failed and diff-affected criteria, runs the full test suite
+as the regression check, and carries the rest — see its "Re-check rounds" section.
+This is a pointer to files, not a summary: do not tell it what the generator claims
+to have fixed.
 
 Validate the verdict with the plugin's checker — do not eyeball it against the
 schema yourself:
@@ -270,8 +304,12 @@ For round `NN` starting at 01:
    commit the single build started from; on later rounds it is the previous
    round's `commit`.
 3. Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the running
-   app, and `.harness/final/NN/`. It derives `SPEC-n` criteria from the spec itself —
-   there is no contract to negotiate, which is the point.
+   app, and `.harness/final/NN/`. On round 01 it derives `SPEC-n` criteria from the
+   spec itself — there is no contract to negotiate, which is the point. On later
+   rounds, tell it this is a **re-check** and give it the previous round's
+   `.harness/final/NN/verdict.json` and `commit`: it reuses those `SPEC-n` ids,
+   re-verifies failed and diff-affected criteria, and runs the full test suite as
+   the regression check.
 4. Validate the verdict with `validate_verdict.py` as in the sprint loop; append to
    `finalRounds`, copying `verificationMode` into the summary as above.
 5. **Pass** → commit, set `phase: "done"`, write the final handoff, and report.

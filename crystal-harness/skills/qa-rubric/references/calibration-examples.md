@@ -120,7 +120,8 @@ card stays editable. All seven criteria pass. Column headers are 1px misaligned.
 
 **Score: 4.** Every criterion passes including error and invalid-input paths, and
 persistence is independently confirmed. The alignment defect belongs to Craft. Not
-5: rapid repeated drags and two-tab behaviour were never exercised.
+5: nothing beyond the criteria was checked — not even a refresh mid-drag or a
+double-clicked Save. A 5 needs a couple of quick checks like those, not a load test.
 
 ### F-e — ⚠ trap — score 1
 

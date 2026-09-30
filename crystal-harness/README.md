@@ -226,6 +226,7 @@ from `hooks/hooks.json` (python3 is assumed to be present).
     "codexReview": "auto",            // "auto" | true | false
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
+    "maxAcceptanceCriteria": 20,      // cap per sprint contract, enforced by validate_contract.py
     "maxFinalQaRounds": 5,
     "costPerMTokUsd": null            // set to show estimated $ in /crystal-harness:status
   }
@@ -292,13 +293,16 @@ default):
 1. **Contract.** A fresh generator cuts the next sprint from the spec's feature
    ordering and writes `contract.md`: scope, out-of-scope, **pinned interfaces** (the
    routes, tables and testids the evaluator needs in order to test), and one or more
-   acceptance criteria per item. A substantial sprint has 15–30 criteria, each naming
-   a starting state, an action, and an observable result — in the browser, against the
-   API, or in the datastore.
-2. **Review.** A fresh evaluator checks four things: is every criterion testable, does
+   acceptance criteria per item. A sprint aims for 10–15 criteria under a hard cap of
+   `maxAcceptanceCriteria` (default 20, enforced by `validate_contract.py`), each
+   naming a starting state, an action, and an observable result — in the browser,
+   against the API, or in the datastore. Over the cap, scope moves to the next sprint.
+2. **Review.** A fresh evaluator checks five things: is every criterion testable, does
    the sprint advance the spec, do the criteria cover *depth* rather than presence,
-   and is anything pinned that should have been left to the generator. At most two
-   rounds, then it escalates.
+   is anything pinned that should have been left to the generator, and can criteria
+   merge. Wording fixes are amendments the evaluator writes itself
+   (`accepted-with-amendments`); only four kinds of finding send the contract back,
+   and a revision edits just what they name. At most two rounds, then it escalates.
 3. **Implement.** A fresh generator builds, commits at every checkpoint, runs the
    project's own build/typecheck/tests, fixes its own failures, and writes a
    `report.md` stating what is complete, what is partial, and what it did not attempt.
@@ -571,9 +575,11 @@ crystal-harness/
 │   ├── inject_harness_context.py        # SessionStart notice when a run exists here
 │   ├── append_ledger.py                 # one ledger entry, stamped and written atomically
 │   ├── validate_verdict.py              # verdict.json schema + what a pass may mean per mode
+│   ├── validate_contract.py             # contract.md criterion cap, scope size, id integrity
 │   ├── codex_review.py                  # find the codex plugin, review the diff, write codex-review.md
 │   ├── test_guard.py
 │   ├── test_validate_verdict.py
+│   ├── test_validate_contract.py
 │   └── test_codex_review.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
@@ -588,6 +594,7 @@ MIT.
 ```bash
 python3 crystal-harness/scripts/test_guard.py
 python3 crystal-harness/scripts/test_validate_verdict.py
+python3 crystal-harness/scripts/test_validate_contract.py
 python3 crystal-harness/scripts/test_codex_review.py
 ```
 
@@ -610,8 +617,14 @@ review content — a failed, empty, unparseable or version-skewed response write
 nothing and exits 1 — and every non-zero outcome clears a leftover file from an
 earlier round before it can be read as this round's evidence.
 
-These three are tested and the prompts are not, because these three fail
-*silently*. If the guard stops denying, the harness keeps running and every verdict
+**15 cases over the contract validator**: the criterion cap at, over and under the
+default and a configured value, missing or empty sections, duplicate ids, the 3–7
+scope range, fenced examples not being counted, and an amendment or revision note
+that references an id the contract does not have.
+
+These four are tested and the prompts are not, because these three fail
+*silently*. If the contract validator stops rejecting, contracts drift back past
+the cap and every phase of the run gets slower and costlier. If the guard stops denying, the harness keeps running and every verdict
 becomes self-awarded. If the validator stops rejecting, a round that measured
 nothing reads as a pass. If the review helper lies with its exit code, a round
 records a second opinion it never got, or cites one about a different diff. None

@@ -155,8 +155,10 @@ asks *is the verb there*, functionality asks *does it behave correctly*.
   write appears to succeed in the UI but is not persisted.
 - **4** — Every acceptance criterion passes, including edge and error paths, and
   every write survives a reload. Remaining defects are cosmetic.
-- **5** — As 4, plus correct behaviour under conditions nobody specified: rapid
-  repeated actions, refresh mid-flow, two tabs, resize during use, concurrent edits.
+- **5** — As 4, plus correct behaviour under conditions nobody specified: a
+  refresh mid-flow, a double submit, back navigation mid-flow, a resize during
+  use. Earn it with at most a couple of quick checks like these — never run a load
+  or concurrency test to justify a 5 (see the evaluator's scope discipline).
 
 A partially working feature scores at most 3. "Works if you do it in the right
 order" is 2.
@@ -223,8 +225,9 @@ grade it from the stylesheet.
 ## 6. Code quality — the one dimension you grade by reading
 
 Everywhere else in this harness, reading the code is not verification. Here it is
-the method. Read the diff for the sprint, or the whole tree at final QA. This is
-the one dimension that is graded identically in every mode.
+the method. Read the diff for the sprint, or the whole tree at final QA — on a
+re-check round, only the diff since the round it re-checks. This is the one
+dimension that is graded identically in every mode.
 
 If `codex-review.md` exists in the round directory, read it. It is an independent
 review of the same diff by a different model, run before you were spawned, and it
@@ -442,11 +445,11 @@ the same standard:
 - **Run the project's own test suite** and record the literal outcome. Set
   `testsVerified` to whether it ran and passed. Tests the generator wrote are not
   independent evidence of correctness, but a failing suite is conclusive.
-- Exercise **every** endpoint the round touches, not just the ones a criterion
-  names: happy path, wrong method, missing required field, unknown id, and a
-  payload violating a stated constraint.
-- Perform each write through the API and confirm it in the datastore. Then restart
-  the backend and confirm it survived.
+- Exercise every endpoint the round adds, not just the ones a criterion names:
+  happy path, wrong method, missing required field, unknown id, and a payload
+  violating a stated constraint — one request each, no load or chaos testing.
+- Perform each write through the API and confirm it in the datastore with a fresh
+  read. Restart the backend only when a criterion is about surviving a restart.
 - Grade code quality by reading, including `codex-review.md` if present.
 
 Score `design`, `originality` and `craft` as `null`. Score `productDepth`,
