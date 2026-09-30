@@ -1,5 +1,7 @@
 # crystal-harness
 
+English | [日本語](README.ja.md)
+
 A Claude Code plugin that packages a multi-agent harness for long-running application
 development. It separates the agent that builds from the agent that grades, replaces
 "is this good?" with a thresholded rubric, resets context through files instead of
@@ -550,7 +552,7 @@ memory, a grader that is not the author — should not.
   This harness targets full-stack builds and carries the union, because dropping
   either set loses a failure class the post explicitly reported catching.
 - **Revision budget is bounded.** The post's frontend loop ran 5–15 iterations and its
-  best result arrived on the tenth. This harness defaults to 5 per sprint and 3 final
+  best result arrived on the tenth. This harness defaults to 5 per sprint and 5 final
   rounds, and escalates early when an issue recurs without a change of approach. That
   trades some of the post's late-iteration upside for not burning a run on a stuck
   loop — raise `maxRevisionsPerSprint` if you want the post's behaviour.
@@ -622,7 +624,7 @@ default and a configured value, missing or empty sections, duplicate ids, the 3�
 scope range, fenced examples not being counted, and an amendment or revision note
 that references an id the contract does not have.
 
-These four are tested and the prompts are not, because these three fail
+These four are tested and the prompts are not, because these four fail
 *silently*. If the contract validator stops rejecting, contracts drift back past
 the cap and every phase of the run gets slower and costlier. If the guard stops denying, the harness keeps running and every verdict
 becomes self-awarded. If the validator stops rejecting, a round that measured
