@@ -145,6 +145,38 @@ def cases(root):
         ("eval -> bash dev server", bash(ev, "npm run dev", root), ALLOW),
         ("eval -> bash sqlite3 read", bash(ev, 'sqlite3 app.db "select count(*) from notes"', root), ALLOW),
         ("eval -> bash reading codex-review", bash(ev, "cat .harness/sprints/01/codex-review.md", root), ALLOW),
+        # ---- team build: builders are generator teammates, seen by NAME, each
+        # confined to the paths the active split plan gives it.
+        ("builder -> its own file", write("builder-api", "app.py", root), ALLOW),
+        ("builder -> inside its own directory", write("builder-api", "tests/api/test_notes.py", root), ALLOW),
+        ("builder -> its own directory, other case", write("builder-api", "Tests/API/x.py", root), ALLOW),
+        ("builder -> another builder's file", write("builder-api", "cli/main.py", root), DENY),
+        ("builder -> a path nobody owns", write("builder-api", "README.md", root), DENY),
+        ("builder -> a sibling of its file", write("builder-api", "app.py.bak", root), DENY),
+        ("builder -> ../ escape into another's dir", write("builder-api", "tests/api/../../cli/main.py", root), DENY),
+        ("builder -> its own report", write("builder-api", ".harness/final/01/reports/api.md", root), ALLOW),
+        ("builder -> another builder's report", write("builder-api", ".harness/final/01/reports/cli.md", root), DENY),
+        ("builder -> the active split plan", write("builder-api", ".harness/split.json", root), DENY),
+        ("builder -> the round's split plan", write("builder-api", ".harness/final/01/split.json", root), DENY),
+        ("builder -> verdict.json", write("builder-api", ".harness/final/01/verdict.json", root), DENY),
+        ("builder -> state.json", write("builder-api", ".harness/state.json", root), DENY),
+        ("builder not in the plan owns nothing", write("builder-ghost", "app.py", root), DENY),
+        ("builder -> bash npm test", bash("builder-cli", "npm test", root), ALLOW),
+        ("builder -> bash git status and diff", bash("builder-cli", "git status --short && git diff -- cli/", root), ALLOW),
+        ("builder -> bash git log", bash("builder-cli", "git log --oneline -5", root), ALLOW),
+        ("builder -> bash git commit", bash("builder-cli", "git commit -am wip", root), DENY),
+        ("builder -> bash git add", bash("builder-cli", "git add -A", root), DENY),
+        ("builder -> bash git stash", bash("builder-cli", "git stash", root), DENY),
+        ("builder -> bash git checkout .", bash("builder-cli", "git checkout -- .", root), DENY),
+        ("builder -> bash git -C . reset", bash("builder-cli", "git -C . reset --hard", root), DENY),
+        ("builder -> bash commit through the script", bash("builder-cli", 'python3 "/p/scripts/team_build.py" commit --builder cli -m "feat: cli"', root), ALLOW),
+        ("builder -> bash naming split.json", bash("builder-cli", "cat .harness/split.json", root), DENY),
+        ("builder -> bash into verdict", bash("builder-cli", "echo x > .harness/final/01/verdict.json", root), DENY),
+        # The plain generator writes the round's proposed plan, never the active one.
+        ("gen -> the round's split plan", write(gen, ".harness/final/01/split.json", root), ALLOW),
+        ("gen -> the active split plan", write(gen, ".harness/split.json", root), DENY),
+        ("namespaced gen -> git commit is its normal way to commit", bash(ns_gen, "git add -A && git commit -m feat", root), ALLOW),
+        ("eval -> the active split plan", write(ev, ".harness/split.json", root), DENY),
         # Agents outside the harness are none of the guard's business.
         ("unrelated agent -> verdict.json", {"cwd": root, "tool_name": "Write", "tool_input": {"file_path": ".harness/sprints/01/verdict.json"}}, ALLOW),
         # Fail closed: an unevaluatable policy must not read as a satisfied one.
@@ -158,6 +190,11 @@ def main():
     try:
         os.makedirs(os.path.join(root, ".harness"))
         os.makedirs(os.path.join(root, "src"))
+        with open(os.path.join(root, ".harness", "split.json"), "w", encoding="utf-8") as f:
+            json.dump({"builders": [
+                {"name": "api", "scope": "the API", "owns": ["app.py", "tests/api/**"]},
+                {"name": "cli", "scope": "the client", "owns": ["cli/**"]},
+            ], "interfaces": ["GET /notes"], "roundDir": ".harness/final/01", "base": "x"}, f)
         os.symlink(os.path.join(root, "src"), os.path.join(root, ".harness", "escape"))
 
         failures = []

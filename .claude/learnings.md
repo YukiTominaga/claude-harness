@@ -164,3 +164,25 @@ the fix. Nothing flags this. After any merge of a branch that had late commits, 
 restarting a merged branch needs a history rewrite, and a force push may be refused by
 the permission mode — merging `origin/main` into the old branch (`-X ours` for the
 hunks the late commit touched) gets the same tree with an ordinary push.
+
+## 2026-11-20: what a live team build showed
+`/crystal-harness:build` with `teamBuild: true`, agent teams on, interactive (tmux), two
+builders on a two-part toy (API + CLI), everything forced to Sonnet 5.5:
+- A hook sees a builder as `agent_type: "builder-api"` on every event, including
+  `SubagentStop` and `TeammateIdle`. The guard denied `builder-api` a shell command that
+  named `split.json`, live — the first denial of a harness agent observed in a real
+  session rather than by replay.
+- **`TaskCompleted` and `TaskCreated` never fired.** The lead coordinated by messages and
+  created no tasks, so a gate hung on `TaskCompleted` would have gated nothing. And
+  `TeammateIdle` fired twice per builder — once when it reported done, once on shutdown —
+  so it cannot tell "finished" from "waiting". The post-build `team_build.py check`, run
+  by the lead, is the gate that actually runs.
+- `SubagentStop` also fires on each idle, so each builder wrote two ledger snapshots; the
+  report's last-snapshot-per-agentId rule is what kept that from double counting.
+- The builders never messaged each other: eleven pinned interfaces were enough for an API
+  and a client to be written blind to each other and pass 69 tests together first time.
+  The split plan, not the messaging, did the coordinating.
+- Cost: split 0.28M tokens, builders 1.97M + 1.16M — 3.4M in all, about 12 minutes of
+  agent time in under 6 minutes of wall clock. A single generator built the API half
+  alone for 1.07M. Not a like-for-like comparison, but there is no sign yet that a team
+  is cheaper; what it buys is wall-clock time and narrower contexts.

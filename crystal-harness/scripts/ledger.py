@@ -82,10 +82,17 @@ def role_of(agent_type):
     A plugin agent arrives namespaced — `crystal-harness:harness-evaluator` —
     so only the last segment is compared. A workflow agent given no agentType
     arrives as `workflow-subagent`, and a teammate arrives under the NAME the
-    lead gave it rather than its definition's type; both are "other" here.
+    lead gave it rather than its definition's type; both are "other" here —
+    except a `builder-<x>` teammate, which is a generator by construction.
     """
     leaf = (agent_type or "").rsplit(":", 1)[-1]
-    return leaf if leaf in ROLES else "other"
+    if leaf in ROLES:
+        return leaf
+    # A team-build builder is a generator teammate; scripts/team_build.py's gate
+    # guarantees only a harness-generator can carry this name.
+    if (agent_type or "").startswith("builder-") and len(agent_type) > len("builder-"):
+        return "harness-generator"
+    return "other"
 
 
 def harness_dir(project_dir):

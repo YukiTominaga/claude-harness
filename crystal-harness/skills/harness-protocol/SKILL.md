@@ -21,6 +21,7 @@ A fresh agent reading complete files does not.
 ├── spec.md              # planner output: the product specification
 ├── state.json           # machine-readable run state
 ├── ledger.jsonl         # cost ledger, appended by a hook — never by an agent
+├── split.json           # the ACTIVE split plan, only while a team build is running
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only log of decisions and events
 ├── artifacts/           # Playwright MCP scratch output, browser mode only (gitignored)
@@ -28,6 +29,8 @@ A fresh agent reading complete files does not.
 │   └── 01/
 │       ├── contract.md      # generator proposes, evaluator accepts
 │       ├── report.md        # generator's completion report + self-check
+│       ├── split.json       # team build only: the split plan the generator proposed
+│       ├── reports/         # team build only: one report per builder
 │       ├── codex-review.md  # independent review of the diff, orchestrator-owned
 │       ├── test-changes.json # what the round did to the tests, orchestrator-owned
 │       ├── lenses/          # parallel evaluation only: one verdict per lens
@@ -71,7 +74,10 @@ assessment asks whether the product `spec.md` described actually exists.
 | `config.json` | `/crystal-harness:init`, the human | everyone |
 | `spec.md` | planner | generator, evaluator |
 | `sprints/NN/contract.md` | generator (proposal), evaluator (review block) | both |
-| `sprints/NN/report.md`, `final/NN/report.md` | generator | evaluator |
+| `sprints/NN/report.md`, `final/NN/report.md` | generator — or, in a team build, `scripts/team_build.py report`, joining the builders' own | evaluator |
+| `*/split.json` (in a round directory) | generator, in the splitting phase only | `team_build.py`, the orchestrating command |
+| `*/reports/<name>.md` | the builder `builder-<name>`, and nobody else | `team_build.py report` |
+| `.harness/split.json` | `scripts/team_build.py activate` / `deactivate`, run by the orchestrating command | the guard, the builders (read-only) |
 | `*/codex-review.md` | the orchestrating command (via `scripts/codex_review.py`) | evaluator (read-only) |
 | `*/test-changes.json` | the orchestrating command (via `scripts/test_changes.py`) | evaluator (read-only), `validate_verdict.py` |
 | `*/qa.md`, `*/verdict.json`, `*/screenshots/` | **evaluator only** — or, in parallel evaluation, `scripts/merge_verdicts.py` run by the orchestrating command | generator (read-only) |
@@ -85,6 +91,15 @@ the generator is blocked from verdict artifacts in both `sprints/NN/` and
 `final/NN/` and from the orchestrator-owned files (`state.json`, `handoff.md`,
 `journal.md`, `config.json`, `spec.md`) and from `ledger.jsonl`; the evaluator is blocked from everything
 except its round artifacts, the contract review block, and `.harness/artifacts/`.
+
+In a team build the generators are agent-team teammates named `builder-<name>`.
+Each is held to the generator's rules and, on top of them, to the paths the active
+split plan gives it: a builder that writes outside its `owns`, into another
+builder's report, or into either `split.json` is denied, and so is any git command
+of its that would act on the whole working tree. Hooks see a teammate under its
+name rather than its agent type, so a second hook guarantees the name means what
+the guard takes it to mean: only a `harness-generator` listed in the active plan
+may be named `builder-<name>`, and a `harness-evaluator` may not be named at all.
 
 `codex-review.md` and `test-changes.json` are blocked for **both** of them. Each is
 evidence about the generator's diff, commissioned before the evaluator exists. A

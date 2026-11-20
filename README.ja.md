@@ -48,6 +48,7 @@ flowchart TB
         vv["validate_verdict.py"]
         mv["merge_verdicts.py"]
         tc["test_changes.py"]
+        tb["team_build.py<br/>(also a PreToolUse hook)"]
         led["ledger.py<br/>(SubagentStop hook)"]
         guard["guard_harness_artifacts.py<br/>(PreToolUse hook)"]
         inject["inject_harness_context.py<br/>(SessionStart hook)"]
@@ -60,7 +61,7 @@ flowchart TB
 
     human -- "config と spec を承認、<br/>ブロックを解除" --> orch
     orch -- 起動 --> planner & gen & evalr
-    orch -- 実行 --> vc & vv & mv & tc
+    orch -- 実行 --> vc & vv & mv & tc & tb
     orch -- "codex_review.py を実行" --> codex
     evalr -- "UI を操作<br/>(browserVerification: true)" --> pw
     guard -. "各エージェントの担当外への<br/>書き込みをブロック" .-> gen & evalr
@@ -124,6 +125,11 @@ flowchart LR
     loop -- "pass、次のスプリントへ" --> g1
     loop -- "feature ordering を消化" --> final["final assessment<br/>evaluator が spec.md から SPEC-n を導出"]
 ```
+
+`teamBuild: true` にすると、最初のビルドを担当する generator 1体が、同時に動く最大3体の
+`builder-<名前>` の teammate に置き換わります。各 builder は guard によって、検査済みの分担表が
+割り当てたパスだけに書き込めます。`team_build.py` が分担表の検査、builder ごとのコミット、
+後始末の確認を行います。fail 後の修正は、今までどおり generator 1体が担当します。
 
 `parallelEvaluation: true` にすると、上の図で1体だった evaluator が、観点(`tests`、`api`、`code`、
 ブラウザが有効なら `screen`)ごとの evaluator に置き換わり、プラグインの `evaluate` workflow が

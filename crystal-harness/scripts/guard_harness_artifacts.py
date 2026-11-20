@@ -27,12 +27,26 @@ than no guard.
 
 import json
 import os
+import re
 import sys
 
 # `lenses/` holds the per-lens verdicts of a parallel evaluation and the
 # reproduction results — verdicts in every sense that matters.
 PROTECTED_LEAVES = ("qa.md", "verdict.json", "screenshots", "lenses")
-ORCHESTRATOR_LEAVES = ("state.json", "handoff.md", "journal.md", "config.json", "spec.md", "ledger.jsonl")
+ORCHESTRATOR_LEAVES = (
+    "state.json", "handoff.md", "journal.md", "config.json", "spec.md", "ledger.jsonl",
+    "split.json",  # the ACTIVE split plan of a team build: it is what bounds each builder
+)
+# A team build runs several generators at once as agent-team teammates. Hooks see
+# a teammate under the NAME the lead gave it, not its agent type, so a builder is
+# recognised by this prefix — and scripts/team_build.py's gate hook guarantees
+# that only a harness-generator in the active split plan can be given such a name.
+BUILDER_PREFIX = "builder-"
+# One builder running any of these would stage, discard or rewrite files the
+# other builders are still writing. They commit through team_build.py instead.
+BUILDER_FORBIDDEN_GIT = re.compile(
+    r"\bgit\s+(?:-C\s+\S+\s+)?(add|commit|stash|reset|checkout|restore|clean|rebase|merge|switch|pull|cherry-pick|revert|rm|mv|apply|am)\b"
+)
 GUARDED_ROLES = ("harness-generator", "harness-evaluator")
 
 
@@ -58,6 +72,35 @@ CODEX_REVIEW_LEAF = "codex-review.md"
 TEST_CHANGES_LEAF = "test-changes.json"
 COMMISSIONED_LEAVES = (CODEX_REVIEW_LEAF, TEST_CHANGES_LEAF)
 EVALUATOR_READ_ONLY_LEAVES = ("report.md",) + COMMISSIONED_LEAVES
+
+
+def builder_of(agent_type):
+    """The builder name if `agent_type` is a team-build teammate's name, else ""."""
+    if isinstance(agent_type, str) and agent_type.startswith(BUILDER_PREFIX) and len(agent_type) > len(BUILDER_PREFIX):
+        return agent_type[len(BUILDER_PREFIX):]
+    return ""
+
+
+def builder_owned(real_cwd, builder):
+    """[(kind, path)] the active split plan gives this builder, or None if there is no usable plan."""
+    try:
+        with open(os.path.join(real_cwd, ".harness", "split.json"), "r", encoding="utf-8") as f:
+            plan = json.load(f)
+        for entry in plan["builders"]:
+            if entry.get("name") == builder:
+                owned = []
+                for item in entry.get("owns", []):
+                    text = str(item).strip().replace("\\", "/")
+                    kind = "file"
+                    if text.endswith("/**"):
+                        kind, text = "dir", text[:-3]
+                    elif text.endswith("/"):
+                        kind, text = "dir", text[:-1]
+                    owned.append((kind, "/".join(p for p in text.split("/") if p not in ("", ".")).casefold()))
+                return owned
+    except Exception:  # noqa: BLE001 - no plan, unreadable plan, unknown builder: all mean "owns nothing"
+        return None
+    return None
 
 
 def allow():
@@ -160,6 +203,9 @@ def main():
     event = load_event()
 
     agent = role_of(event.get("agent_type"))
+    builder = "" if agent else builder_of(event.get("agent_type"))
+    if builder:
+        agent = "harness-generator"  # a builder is a generator, with a narrower lane
     if not agent:
         allow()
 
@@ -205,6 +251,20 @@ def main():
                     "The orchestrating command owns the run state; read it with "
                     "Read if you need it."
                 )
+        if builder:
+            if "split.json" in lowered:
+                deny(
+                    f"{BUILDER_PREFIX}{builder} may not touch split.json through the shell. "
+                    "The split plan is what bounds every builder; read it with Read."
+                )
+            if isinstance(command, str) and BUILDER_FORBIDDEN_GIT.search(command):
+                deny(
+                    f"{BUILDER_PREFIX}{builder} may not run that git command. Other builders are "
+                    "writing in this working tree right now, and it would stage, discard or "
+                    "rewrite their files. Commit your own paths with: python3 "
+                    '"${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py" commit --builder '
+                    f'{builder} -m "<message>". Read-only git (status, diff, log, show) is fine.'
+                )
         allow()
 
     target = (
@@ -237,6 +297,37 @@ def main():
                 f"harness-generator may not write {rel}. The orchestrating command "
                 "owns the run state (state.json, handoff.md, journal.md, config.json, "
                 "spec.md) and a hook owns ledger.jsonl. Report what you did in report.md and let the caller record it."
+            )
+
+    if builder:
+        if parts and parts[0] == ".harness":
+            own_report = (
+                len(parts) == 5
+                and parts[1] in ("sprints", "final")
+                and parts[3] == "reports"
+                and parts[4] == f"{builder}.md".casefold()
+            )
+            if not own_report:
+                deny(
+                    f"{BUILDER_PREFIX}{builder} may not write {rel}. Inside .harness/ a builder "
+                    f"writes one file: its own report, <round dir>/reports/{builder}.md."
+                )
+            allow()
+        owned = builder_owned(real_cwd, builder)
+        if owned is None:
+            deny(
+                f"{BUILDER_PREFIX}{builder} may not write {rel}: there is no active split plan "
+                "naming this builder (.harness/split.json), so it owns nothing. Tell the lead."
+            )
+        target_path = "/".join(parts)
+        if not any(
+            target_path == path if kind == "file" else (target_path == path or target_path.startswith(path + "/"))
+            for kind, path in owned
+        ):
+            deny(
+                f"{BUILDER_PREFIX}{builder} may not write {rel}: the split plan does not give you "
+                "that path. If the change is needed, message the builder who owns it (the plan "
+                "is in .harness/split.json) and ask for it; do not work around this."
             )
 
     if agent == "harness-evaluator" and not evaluator_may_write(parts):
