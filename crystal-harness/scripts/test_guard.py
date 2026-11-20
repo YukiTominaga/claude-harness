@@ -86,6 +86,10 @@ def cases(root):
         ("gen -> journal.md", write(gen, ".harness/journal.md", root), DENY),
         ("gen -> spec.md", write(gen, ".harness/spec.md", root), DENY),
         ("gen -> config.json", write(gen, ".harness/config.json", root), DENY),
+        # The cost ledger is written by a hook from transcripts. An agent that
+        # can edit it can make itself look cheap.
+        ("gen -> ledger.jsonl", write(gen, ".harness/ledger.jsonl", root), DENY),
+        ("gen -> bash appending to ledger", bash(gen, "echo '{}' >> .harness/ledger.jsonl", root), DENY),
         # Shell is the obvious way around a path check, for the one agent with no
         # legitimate reason to name a verdict artifact at all.
         ("gen -> bash redirect into verdict", bash(gen, "echo x > .harness/sprints/01/verdict.json", root), DENY),
@@ -111,6 +115,7 @@ def cases(root):
         ("eval -> state.json", write(ev, ".harness/state.json", root), DENY),
         ("eval -> handoff.md", write(ev, ".harness/handoff.md", root), DENY),
         ("eval -> spec.md", write(ev, ".harness/spec.md", root), DENY),
+        ("eval -> ledger.jsonl", write(ev, ".harness/ledger.jsonl", root), DENY),
         ("eval -> sprints report.md", write(ev, ".harness/sprints/01/report.md", root), DENY),
         ("eval -> final report.md", write(ev, ".harness/final/01/report.md", root), DENY),
         ("eval -> stray note in .harness", write(ev, ".harness/notes.md", root), DENY),

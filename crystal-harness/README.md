@@ -52,7 +52,7 @@ Restart Claude Code. Or, for a throwaway trial without installing:
 claude --plugin-dir /absolute/path/to/claude-harness/crystal-harness
 ```
 
-Verify — the inventory should show 3 agents, 1 MCP server, 1 hook, and 9 skills (the
+Verify — the inventory should show 3 agents, 1 MCP server, 3 hooks, and 9 skills (the
 six commands are counted as skills alongside the three reference skills):
 
 ```bash
@@ -121,7 +121,8 @@ agent's conversation.
 .harness/
 ├── config.json          # harness configuration
 ├── spec.md              # planner output: the product specification
-├── state.json           # run state + the cost ledger
+├── state.json           # run state
+├── ledger.jsonl         # cost ledger, appended by a hook from agent transcripts
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only human-readable log
 ├── artifacts/           # Playwright scratch output, browser mode only (gitignored)
@@ -152,16 +153,36 @@ relitigated, **approaches already tried and rejected**, the files that matter, a
 
 ### The cost ledger
 
-`state.json` carries an append-only `ledger`: one entry per subagent call, with the
-agent, phase, wall time and token count reported by the Agent tool.
+`.harness/ledger.jsonl` is an append-only record of what every agent cost: the
+agent, phase, sprint and round, wall time, and tokens split into input, cache
+write, cache read and output.
+
+No model writes it. A `SubagentStop` hook runs `scripts/ledger.py` each time an
+agent finishes — a subagent, a workflow agent or an agent-team teammate — and sums
+the usage of **every API request in that agent's transcript**. That is a
+deliberate change from recording the `subagent_tokens` figure the Agent tool
+returns, which turned out to be the size of the agent's *final* request rather
+than its run: measured on Claude Code 2.1.329, an agent that processed 42,996
+tokens over two requests reported 21,689. For a long generator session the gap is
+orders of magnitude, and the earlier ledger understated every run by it. (The
+hook also has to wait a moment: Claude Code writes an agent's last response to the
+transcript about 100 ms after `SubagentStop` fires, so the hook holds until that
+message appears rather than summing a transcript that is one request short.)
 
 This exists because the most important recurring judgement in this design is *is this
 component still worth its cost*, and that cannot be answered from prose.
-`/crystal-harness:status` aggregates it into a per-agent table and names the evaluator's share
-of the run. Set `harness.costPerMTokUsd` and it converts to estimated dollars.
+`/crystal-harness:status` prints `ledger.py report`: a per-agent and a per-round table, and the
+evaluator's share of the run. Set `harness.costPerMTokUsd` and it adds estimated
+dollars — as four per-category rates, because most tokens in a long session are
+cache reads, which cost a fraction of fresh input.
 
 Without this, the "what to strip" section below would be an opinion. With it, "the
 evaluator found nothing in the last four sprints and cost 38% of the run" is a fact.
+
+What it does not cover: the orchestrating session's own usage, and a codex
+review's tokens (its wall time is recorded; its cost is not reported back). If a
+transcript cannot be read the entry is written with `tokens: null` and the report
+says how many calls are missing — a hole is reported, never estimated.
 
 ### Ownership, enforced
 
@@ -177,12 +198,25 @@ things it blocks silently destroys the design:
   A generator that can write it manufactures its own second opinion; an evaluator
   that can write it edits the evidence it is about to cite.
 
-Everything else passes through untouched. There is no logging hook and no formatting
-hook; neither prevents a named failure, and scaffolding that prevents nothing is the
-overhead this whole design argues against.
+The same hook keeps both of them out of the orchestrator's files — `state.json`,
+`handoff.md`, `journal.md`, `config.json`, `spec.md` — and out of `ledger.jsonl`:
+an agent that can edit the ledger can make itself look cheap.
+
+Everything else passes through untouched. There is no formatting hook and no
+general logging hook; neither prevents a named failure, and scaffolding that
+prevents nothing is the overhead this whole design argues against. The two other
+hooks each answer one: `SessionStart` says a run already exists here, and
+`SubagentStop` records the cost ledger above, because an entry a model has to
+remember to write is an entry that goes missing.
 
 How it behaves at the edges, and why:
 
+- **It matches the agent by the last segment of `agent_type`.** Claude Code hands
+  a plugin's agent to hooks as `crystal-harness:harness-generator`, not the bare
+  name. Until 0.10.0 the guard compared the raw value against the bare names,
+  matched nothing, and allowed every write — on every installed copy, with no
+  symptom, while its own test suite (which used the bare names) passed. The tests
+  now lead with the namespaced form.
 - **It fails closed.** If the event cannot be parsed, or `python3` is missing, the
   guard exits 2 and the call is blocked with an explanation. A guard that waves
   through what it could not inspect is worse than no guard.
@@ -230,7 +264,8 @@ from `hooks/hooks.json` (python3 is assumed to be present).
     "maxRevisionsPerSprint": 5,
     "maxAcceptanceCriteria": 20,      // cap per sprint contract, enforced by validate_contract.py
     "maxFinalQaRounds": 5,
-    "costPerMTokUsd": null            // set to show estimated $ in /crystal-harness:status
+    "costPerMTokUsd": null            // {input, output, cacheWrite, cacheRead} in USD per MTok
+                                      // → estimated $ in /crystal-harness:status
   }
 }
 ```
@@ -575,14 +610,15 @@ crystal-harness/
 ├── scripts/
 │   ├── guard_harness_artifacts.py       # the ownership policy the PreToolUse hook runs
 │   ├── inject_harness_context.py        # SessionStart notice when a run exists here
-│   ├── append_ledger.py                 # one ledger entry, stamped and written atomically
+│   ├── ledger.py                        # cost ledger: SubagentStop hook, codex append, report
 │   ├── validate_verdict.py              # verdict.json schema + what a pass may mean per mode
 │   ├── validate_contract.py             # contract.md criterion cap, scope size, id integrity
 │   ├── codex_review.py                  # find the codex plugin, review the diff, write codex-review.md
 │   ├── test_guard.py
 │   ├── test_validate_verdict.py
 │   ├── test_validate_contract.py
-│   └── test_codex_review.py
+│   ├── test_codex_review.py
+│   └── test_ledger.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -598,12 +634,14 @@ python3 crystal-harness/scripts/test_guard.py
 python3 crystal-harness/scripts/test_validate_verdict.py
 python3 crystal-harness/scripts/test_validate_contract.py
 python3 crystal-harness/scripts/test_codex_review.py
+python3 crystal-harness/scripts/test_ledger.py
 ```
 
 No framework and no dependencies.
 
-**43 cases over the ownership guard**: both denial policies, the `codex-review.md`
-row that denies both agents, both escape routes (`..` traversal and a symlink
+**56 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
+Code actually sends, both denial policies, the `codex-review.md`
+row that denies both agents, the cost ledger, both escape routes (`..` traversal and a symlink
 planted inside `.harness/`), case-folding, the Bash path, every legitimate write,
 and both fail-closed paths.
 
@@ -624,8 +662,16 @@ default and a configured value, missing or empty sections, duplicate ids, the 3�
 scope range, fenced examples not being counted, and an amendment or revision note
 that references an id the contract does not have.
 
-These four are tested and the prompts are not, because these four fail
-*silently*. If the contract validator stops rejecting, contracts drift back past
+**54 cases over the cost ledger**: usage summed across every request rather than
+the last, a final response that reaches the transcript after the hook has started
+still being counted, a streamed response counted once, a re-stopped agent's snapshot
+superseding rather than adding, the hook exiting 0 on every malformed input while
+recording an unreadable transcript as `null` rather than zero, per-category
+pricing, and entries from a pre-0.10.0 `state.json` kept out of token totals.
+
+These five are tested and the prompts are not, because these five fail
+*silently*. If the ledger stops recording, or double-counts, the table still
+looks plausible and every strip decision is made on it. If the contract validator stops rejecting, contracts drift back past
 the cap and every phase of the run gets slower and costlier. If the guard stops denying, the harness keeps running and every verdict
 becomes self-awarded. If the validator stops rejecting, a round that measured
 nothing reads as a pass. If the review helper lies with its exit code, a round

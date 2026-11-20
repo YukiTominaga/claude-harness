@@ -49,22 +49,22 @@ same thing.
 
 ## Cost
 
-Aggregate `state.json`'s `ledger`:
+Run the plugin's aggregator and print its output verbatim — do not add up
+`ledger.jsonl` yourself, and do not reformat the tables:
 
-| agent | calls | tokens | wall time |
-| harness-planner | | | |
-| harness-generator | | | |
-| harness-evaluator | | | |
-| codex-review | | | |
-| **total** | | | |
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" report
+```
 
-`codex-review` rows report wall time only; its token cost is not reported back to
-the harness, so leave that cell `—` rather than guessing.
+It prints tokens by category (input, cache write, cache read, output), calls and
+wall time per agent and per round, the evaluator's share of total tokens, an
+estimated-USD column when `harness.costPerMTokUsd` is set, and a line for anything
+it could not count: calls with no token data, entries from a pre-0.10.0
+`state.json`, unparseable lines. Pass every one of those lines on. A ledger with
+holes in it is still evidence; a ledger whose holes were hidden is not.
 
-Then one line naming the evaluator's share of total tokens. If
-`harness.costPerMTokUsd` is set, add an estimated-USD column and label it estimated.
-If the ledger is empty, say so — the strip decisions in the README are not answerable
-without it.
+If it says the ledger is empty, say so — the strip decisions in the README are not
+answerable without it.
 
 ## Open blocking issues
 

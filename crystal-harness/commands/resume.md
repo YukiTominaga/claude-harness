@@ -55,7 +55,8 @@ Print a reconstruction summary and stop for confirmation:
 - revision count against `maxRevisionsPerSprint`, and any issue id at ≥ 2 recurrences
 - the six scores per round across this sprint or final sequence, each round's
   `verificationMode` from its `state.json` summary (not from `verdict.json`, which
-  holds only the latest round), and the ledger totals so far. If
+  holds only the latest round), and the ledger totals so far as
+  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" report` prints them. If
   `harness.browserVerification` disagrees with the last round's mode, say so — the
   config was changed mid-run and the rounds are not comparable.
 - `lastGoodCommit` and whether the working tree is clean

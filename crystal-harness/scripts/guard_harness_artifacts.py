@@ -5,7 +5,7 @@ harness-protocol skill. The design of the harness assumes two boundaries hold:
 
 - The generator never authors a verdict (qa.md / verdict.json / screenshots),
   and never rewrites the orchestrator's run state (state.json, handoff.md,
-  journal.md, config.json, spec.md). A generator that writes its own verdict or
+  journal.md, config.json, spec.md) or the cost ledger (ledger.jsonl). A generator that writes its own verdict or
   its own handoff is self-grading, which destroys the whole design.
 - The evaluator never edits what it grades. Its writes are confined to its own
   round directories under .harness/sprints/ and .harness/final/ (where
@@ -30,7 +30,7 @@ import os
 import sys
 
 PROTECTED_LEAVES = ("qa.md", "verdict.json", "screenshots")
-ORCHESTRATOR_LEAVES = ("state.json", "handoff.md", "journal.md", "config.json", "spec.md")
+ORCHESTRATOR_LEAVES = ("state.json", "handoff.md", "journal.md", "config.json", "spec.md", "ledger.jsonl")
 GUARDED_ROLES = ("harness-generator", "harness-evaluator")
 
 
@@ -126,7 +126,7 @@ def is_codex_review(parts):
 
 
 def is_orchestrator_file(parts):
-    """.harness/{state.json,handoff.md,journal.md,config.json,spec.md}"""
+    """.harness/{state.json,handoff.md,journal.md,config.json,spec.md,ledger.jsonl}"""
     return len(parts) == 2 and parts[0] == ".harness" and parts[1] in ORCHESTRATOR_LEAVES
 
 
@@ -187,7 +187,7 @@ def main():
                 "shell. The orchestrating command commissions the independent "
                 "review; read it with Read if you need it."
             )
-        for leaf in ("state.json", "handoff.md", "journal.md"):
+        for leaf in ("state.json", "handoff.md", "journal.md", "ledger.jsonl"):
             if leaf in lowered:
                 deny(
                     f"harness-generator may not touch {leaf} through the shell. "
@@ -225,7 +225,7 @@ def main():
             deny(
                 f"harness-generator may not write {rel}. The orchestrating command "
                 "owns the run state (state.json, handoff.md, journal.md, config.json, "
-                "spec.md). Report what you did in report.md and let the caller record it."
+                "spec.md) and a hook owns ledger.jsonl. Report what you did in report.md and let the caller record it."
             )
 
     if agent == "harness-evaluator" and not evaluator_may_write(parts):

@@ -19,7 +19,8 @@ A fresh agent reading complete files does not.
 .harness/
 ├── config.json          # harness configuration, written by /crystal-harness:init
 ├── spec.md              # planner output: the product specification
-├── state.json           # machine-readable run state, including the cost ledger
+├── state.json           # machine-readable run state
+├── ledger.jsonl         # cost ledger, appended by a hook — never by an agent
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only log of decisions and events
 ├── artifacts/           # Playwright MCP scratch output, browser mode only (gitignored)
@@ -63,12 +64,13 @@ assessment asks whether the product `spec.md` described actually exists.
 | `*/codex-review.md` | the orchestrating command (via `scripts/codex_review.py`) | evaluator (read-only) |
 | `*/qa.md`, `*/verdict.json`, `*/screenshots/` | **evaluator only** | generator (read-only) |
 | `state.json`, `handoff.md`, `journal.md` | the orchestrating command | everyone |
+| `ledger.jsonl` | the `SubagentStop` hook, and `scripts/ledger.py append` for codex reviews | `/crystal-harness:status`, via `scripts/ledger.py report` |
 
 The generator writing its own verdict is the single failure that destroys the whole
 design, so this table is enforced by a `PreToolUse` hook, not just by instruction:
 the generator is blocked from verdict artifacts in both `sprints/NN/` and
 `final/NN/` and from the orchestrator-owned files (`state.json`, `handoff.md`,
-`journal.md`, `config.json`, `spec.md`); the evaluator is blocked from everything
+`journal.md`, `config.json`, `spec.md`) and from `ledger.jsonl`; the evaluator is blocked from everything
 except its round artifacts, the contract review block, and `.harness/artifacts/`.
 
 `codex-review.md` is blocked for **both** of them, which is the only row where that
@@ -85,14 +87,19 @@ JSON Schema (draft 2020-12):
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "harness state",
   "type": "object",
-  "required": ["schemaVersion", "phase", "currentSprint", "sprints", "finalRounds", "lastGoodCommit", "ledger", "updatedAt"],
+  "required": ["schemaVersion", "phase", "currentSprint", "currentRound", "sprints", "finalRounds", "lastGoodCommit", "updatedAt"],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": { "const": 2 },
+    "schemaVersion": { "const": 3 },
     "phase": {
       "enum": ["init", "planning", "contracting", "building", "qa", "revising", "final-building", "final-qa", "done", "blocked"]
     },
     "currentSprint": { "type": ["integer", "null"], "minimum": 1 },
+    "currentRound": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "the round the next agent works in. In a sprint: that sprint's revisions + 1. In the final assessment: the NN of the final/NN directory the next agent writes into. null before any round exists (init, planning, contracting, and the single build of useSprints: false). Set it in the same edit as phase — the ledger hook stamps every entry with it."
+    },
     "sprints": {
       "type": "array",
       "items": {
@@ -116,7 +123,10 @@ JSON Schema (draft 2020-12):
       "description": "blocking-issue id -> number of consecutive verdicts it has appeared in",
       "additionalProperties": { "type": "integer", "minimum": 1 }
     },
-    "ledger": { "$ref": "#/$defs/ledger" },
+    "ledger": {
+      "type": "array",
+      "description": "DEPRECATED, schemaVersion 2 only. A run started before 0.10.0 kept its ledger here. Never append to it and never delete it: scripts/ledger.py report still reads it, as calls and wall time only."
+    },
     "lastGoodCommit": { "type": ["string", "null"] },
     "blockedReason": { "type": ["string", "null"] },
     "updatedAt": { "type": "string", "format": "date-time" }
@@ -138,25 +148,6 @@ JSON Schema (draft 2020-12):
           "commit": { "type": ["string", "null"] }
         }
       }
-    },
-    "ledger": {
-      "type": "array",
-      "description": "append-only, one entry per subagent invocation, plus one per codex review. This is the evidence for whether a component is still worth its cost. codex-review entries carry a duration and a null token count, because the cost is not reported back to the orchestrator.",
-      "items": {
-        "type": "object",
-        "required": ["ts", "agent", "phase", "durationMs", "tokens"],
-        "additionalProperties": false,
-        "properties": {
-          "ts": { "type": "string", "format": "date-time" },
-          "agent": { "enum": ["harness-planner", "harness-generator", "harness-evaluator", "codex-review"] },
-          "phase": { "type": "string", "description": "the phase value at the time of the call" },
-          "sprint": { "type": ["integer", "null"] },
-          "round": { "type": ["integer", "null"] },
-          "durationMs": { "type": ["integer", "null"], "minimum": 0 },
-          "tokens": { "type": ["integer", "null"], "minimum": 0, "description": "subagent_tokens as reported by the Agent tool result" },
-          "note": { "type": "string" }
-        }
-      }
     }
   }
 }
@@ -165,18 +156,64 @@ JSON Schema (draft 2020-12):
 `phase: "blocked"` means the loop stopped and is waiting for a human. Only a human
 decision moves it — `/crystal-harness:build` asks before clearing it.
 
-### The ledger is not optional
+A `state.json` with `schemaVersion: 2` belongs to a run started before 0.10.0. Keep
+its `ledger` array where it is, set `schemaVersion` to 3 and add `currentRound` at
+the next phase transition, and carry on.
 
-After **every** subagent call, append a ledger entry using the `durationMs` and
-`subagent_tokens` the Agent tool reports in its result. Use the plugin's
-`scripts/append_ledger.py` helper rather than rewriting `state.json` by hand — it
-stamps the timestamp, appends the entry, and writes atomically. If a value is
-unavailable, omit its flag so the script records `null`; never estimate.
+## `ledger.jsonl` — recorded by code, not by you
 
-This exists for one reason. The most important recurring judgement in this harness
-is *is this component still worth its cost*, and that question cannot be answered
-from prose. The ledger is what makes "the evaluator found nothing in the last four
-sprints and cost 38% of the run" a fact instead of an impression.
+The most important recurring judgement in this harness is *is this component still
+worth its cost*, and that question cannot be answered from prose. The ledger is what
+makes "the evaluator found nothing in the last four sprints and cost 38% of the
+run" a fact instead of an impression.
+
+Nobody appends agent entries by hand. A `SubagentStop` hook runs
+`scripts/ledger.py hook` every time an agent finishes — a subagent, a workflow
+agent or an agent-team teammate — sums the token usage of **every API request in
+that agent's transcript**, and appends one JSON line:
+
+```json
+{"ts": "2026-11-20T04:59:57Z", "agent": "harness-generator",
+ "agentType": "crystal-harness:harness-generator", "agentId": "a0eca8157df0ecc2a",
+ "kind": "subagent", "phase": "building", "sprint": 2, "round": 1,
+ "durationMs": 3650, "requests": 2,
+ "tokens": {"input": 4, "output": 763, "cacheWrite": 13355, "cacheRead": 28874},
+ "models": ["claude-opus-5-5"], "source": "transcript"}
+```
+
+Three rules follow from how it is produced:
+
+- **Do not copy `subagent_tokens` from an Agent tool result anywhere.** It is the
+  size of the agent's *final* request, not its run — a two-request agent that
+  processed 42,996 tokens reports 21,689. The ledger is the only token figure to
+  quote in the journal or to a human.
+- **Do not sum `ledger.jsonl` yourself.** An agent that stops more than once writes
+  a cumulative snapshot each time, so the last line per `agentId` supersedes the
+  earlier ones. Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" report`
+  (add `--json` for a machine-readable form) and print what it prints.
+- **`phase`, `sprint` and `round` are read from `state.json` at the moment the agent
+  stops.** So update `phase`, `currentSprint` and `currentRound` *before* spawning
+  an agent, never after it returns — an entry stamped with the previous phase is
+  attributed to the wrong round for good.
+
+`agent` is the harness role when the agent's type names one, and `other` for
+anything else that ran during the run (a workflow agent with no agent type, a
+teammate, an Explore call) — those cost tokens too, and a ledger that dropped them
+would understate the run.
+
+A codex review is not an agent and fires no hook. Record it yourself, with the
+wall time you measured:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" append --agent codex-review --duration-ms <ms>
+```
+
+`append` takes the phase, sprint and round from `state.json` and refuses any agent
+role, because those are the hook's to record.
+
+If an entry has `"tokens": null`, the transcript could not be read; `report` counts
+such calls and says so. That is a finding to pass on to the human, not a number to
+estimate around. The orchestrating session's own usage is not in the ledger.
 
 ## `verdict.json`
 
@@ -252,14 +289,14 @@ Rules that make the template work:
 Append-only. Never rewrite prior entries. One entry per event a human would want to
 reconstruct later: phase transitions, contract accept/reject with the reason,
 verdicts with scores, revisions, escalations, human decisions, and configuration
-changes. Include the ledger delta (tokens and duration) for the phase.
+changes. Include the round's tokens and duration, taken from `ledger.py report`.
 
 ```markdown
 ## 2026-08-09T12:34:56Z — sprint 01 — verdict: fail (weighted 2.8)
 2 blocking issues. Top: "Rectangle fill tool only places tiles at the drag start
 and end points instead of filling the region" (cause: fillRectangle not called on
 mouseUp, LevelEditor.tsx:414). Revision 1 of 5 starting.
-Evaluator: 41.2k tokens, 6m12s.
+Evaluator: 1.84M tokens (1.71M cache read), 6m12s.
 ```
 
 Escalations must be logged with the reason before control returns to the human.
