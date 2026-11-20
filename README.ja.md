@@ -132,6 +132,10 @@ flowchart LR
 もう一度試す前に突き止めます。`rules.py` は、このプロジェクトの evaluator が学んだこと(issue の記録と、
 人間が承認したルール)を保持し、後のラウンドはそのルールに照らして確認されます。
 
+`crystal-harness/evals/` は evaluator 自体を測ります。既知の欠陥を1つずつ仕込んだ小さなアプリ6つと、
+問題のないアプリ2つを使い、verdict が欠陥を名指ししたか、問題のないアプリを pass にしたかで採点します。
+上のどの部品を変更した場合も、その良し悪しはこれで判断します。
+
 `teamBuild: true` にすると、最初のビルドを担当する generator 1体が、同時に動く最大3体の
 `builder-<名前>` の teammate に置き換わります。各 builder は guard によって、検査済みの分担表が
 割り当てたパスだけに書き込めます。`team_build.py` が分担表の検査、builder ごとのコミット、
