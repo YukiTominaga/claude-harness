@@ -49,6 +49,7 @@ flowchart TB
         mv["merge_verdicts.py"]
         tc["test_changes.py"]
         tb["team_build.py<br/>(also a PreToolUse hook)"]
+        rl["rules.py"]
         led["ledger.py<br/>(SubagentStop hook)"]
         guard["guard_harness_artifacts.py<br/>(PreToolUse hook)"]
         inject["inject_harness_context.py<br/>(SessionStart hook)"]
@@ -61,7 +62,7 @@ flowchart TB
 
     human -- "approves config, spec;<br/>clears blocks" --> orch
     orch -- spawns --> planner & gen & evalr
-    orch -- runs --> vc & vv & mv & tc & tb
+    orch -- runs --> vc & vv & mv & tc & tb & rl
     orch -- "runs codex_review.py" --> codex
     evalr -- "drives the UI<br/>(browserVerification: true)" --> pw
     guard -. "blocks writes outside<br/>each agent's lane" .-> gen & evalr
@@ -125,6 +126,12 @@ flowchart LR
     loop -- "pass, next sprint" --> g1
     loop -- "feature ordering done" --> final["final assessment<br/>evaluator derives SPEC-n from spec.md"]
 ```
+
+Two more pieces sit beside the loop. A fourth agent, `harness-investigator`, is
+used only by the optional `diagnose` workflow, which works out why a blocking issue
+came back before the generator tries again. And `rules.py` keeps what the project's
+evaluators have learned — an issue log, and human-approved rules that later rounds
+are checked against.
 
 With `teamBuild: true` the single generator of the first build becomes up to three
 `builder-<name>` teammates working at once, each confined by the guard to the

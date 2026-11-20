@@ -53,7 +53,7 @@ try:
 except ImportError:  # Windows: appends are still single write() calls
     fcntl = None
 
-ROLES = ("harness-planner", "harness-generator", "harness-evaluator")
+ROLES = ("harness-planner", "harness-generator", "harness-evaluator", "harness-investigator")
 # Components with a cost that are not agents and so produce no SubagentStop.
 EXTERNAL = ("codex-review",)
 TOKEN_FIELDS = (
@@ -580,7 +580,7 @@ def render(report):
 
 # ---------------------------------------------------------------- budget
 
-HARNESS_WORKFLOWS = ("evaluate",)
+HARNESS_WORKFLOWS = ("evaluate", "diagnose")
 
 
 def load_caps(project_dir):

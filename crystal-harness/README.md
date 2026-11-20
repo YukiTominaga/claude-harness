@@ -25,6 +25,8 @@ Modeled on Anthropic's
 | **QA too slow to run** | Browser verification dominates the cost of a round, so it gets skipped informally and nobody records that it was. | Browser verification is a config flag with **three recorded modes**. A round that skipped it says so in the verdict, and a round that wanted it and did not get it can never pass. |
 | **Tests that vouch for themselves** | The evaluator leans on the project's test suite, and the generator wrote it. A failing test deleted or skipped never shows up as a red suite. | A script reports what each round did to the tests before the evaluator runs. If the suite was weakened, no earlier pass may be carried on its strength, and the verdict validator enforces that. |
 | **A run with no ceiling** | Rounds keep going because each one looks like it might be the last. | Optional token and cost caps, checked from the ledger. When one is reached the loop stops and asks, and a hook refuses to start another harness agent until a human raises it. |
+| **The same defect, again** | Every evaluator starts a round knowing nothing about the rounds before it, so a kind of defect it missed once it can miss again. | An issue log that outlives the verdicts, and **project rules** drawn from it: concrete checks with a trigger readable from a diff, approved by a human, handed to the evaluator whenever a round's diff hits the trigger. The validator rejects a verdict that leaves one out. |
+| **A fix that was a guess** | A blocking issue comes back after it was "fixed", and the next attempt is a smaller version of the last. | Optionally, a returning issue is **diagnosed** before anyone touches the code again: evidence, three competing hypotheses argued apart, a refutation of each, then the experiments that decide. |
 
 ## Install
 
@@ -54,9 +56,9 @@ Restart Claude Code. Or, for a throwaway trial without installing:
 claude --plugin-dir /absolute/path/to/claude-harness/crystal-harness
 ```
 
-Verify — the inventory should show 3 agents, 1 MCP server, 3 hooks, and 11 skills (the
-six commands are counted as skills alongside the five reference skills), plus the
-`evaluate` workflow:
+Verify — the inventory should show 4 agents, 1 MCP server, 3 hooks, and 12 skills (the
+seven commands are counted as skills alongside the five reference skills), plus the
+`evaluate` and `diagnose` workflows:
 
 ```bash
 claude plugin details crystal-harness
@@ -110,6 +112,7 @@ At any point:
 /crystal-harness:status                # where is the run, and what has it cost
 /crystal-harness:qa [n|final]          # grade the current tree, standalone
 /crystal-harness:resume                # after a crash, /clear, or a new session
+/crystal-harness:rules                 # turn defects that came back into approved project rules
 ```
 
 > Plugin commands are namespaced: the real invocation is
@@ -126,6 +129,8 @@ agent's conversation.
 ├── spec.md              # planner output: the product specification
 ├── state.json           # run state
 ├── ledger.jsonl         # cost ledger, appended by a hook from agent transcripts
+├── issues.jsonl         # every issue every validated verdict raised
+├── rules.json           # project rules the human approved
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only human-readable log
 ├── artifacts/           # Playwright scratch output, browser mode only (gitignored)
@@ -134,6 +139,8 @@ agent's conversation.
 │   ├── report.md        # generator's completion report + self-check
 │   ├── codex-review.md  # independent review of the diff (when codex is installed)
 │   ├── test-changes.json # what the round did to the tests, from a script
+│   ├── rules-to-check.json # the project rules this round's diff triggers
+│   ├── diagnosis/       # diagnose workflow only: evidence, hypotheses, the diagnosis
 │   ├── lenses/          # parallel evaluation only: one verdict per lens
 │   ├── qa.md            # the round's verdict, human-readable
 │   ├── verdict.json     # the round's verdict, machine-readable
@@ -208,6 +215,11 @@ things it blocks silently destroys the design:
   write one edits the evidence it is about to cite.
 - `harness-generator` writing anything under a round's `lenses/` — in parallel
   evaluation those files are the verdicts.
+- **Either of them** writing `rules.json`, `issues.jsonl` or a round's
+  `rules-to-check.json` — a generator that can edit the rules can delete the one
+  that would catch it.
+- `harness-investigator` writing anywhere but a round's `diagnosis/` directory —
+  it diagnoses, and a diagnosis made on a tree it altered is of a different tree.
 
 The same hook keeps both of them out of the orchestrator's files — `state.json`,
 `handoff.md`, `journal.md`, `config.json`, `spec.md` — and out of `ledger.jsonl`:
@@ -273,6 +285,7 @@ from `hooks/hooks.json` (python3 is assumed to be present).
     "codexReview": "auto",            // "auto" | true | false
     "teamBuild": false,               // true → first build split across builder teammates
     "maxBuilders": 3,                 // team build only: upper bound on builders
+    "diagnoseRecurringIssues": false, // true → diagnose a blocking issue that came back
     "parallelEvaluation": false,      // true → one evaluator per lens, merged by a script
     "reproduceBlockingIssues": true,  // parallel evaluation only: re-try each blocking issue
     "maxSprints": 12,
@@ -333,6 +346,7 @@ revisit when a new model lands:
 | `harness-planner` | `claude-opus-5-5` | `high` | Structured expansion of an idea into a spec |
 | `harness-generator` | `claude-opus-5-5` | `xhigh` | Long-horizon coherence and hard implementation |
 | `harness-evaluator` | `claude-opus-5-5` | `high` | Design and depth judgement, not just criterion matching |
+| `harness-investigator` | `claude-opus-5-5` | `high` | Finding a cause the generator already missed once |
 
 **Effort is the cost lever, not model tier.** All three agents run Opus 5.5; dropping
 the generator from `xhigh` to `medium` moves cost far more than switching an agent to
@@ -493,6 +507,78 @@ deliberately conservative — a legitimate refactor can trip it — because a fa
 alarm costs one fully verified round and a miss costs a pass nobody earned.
 
 Like the codex review, neither agent may write the file; the guard blocks both.
+
+### Project rules
+
+A context reset means every evaluator starts a round knowing nothing about earlier
+ones. That is the point of it — and it means a kind of defect missed once can be
+missed again. Project rules are the memory that survives the reset, kept as data
+and applied by code.
+
+- After every validated verdict, `scripts/rules.py record` appends its issues to
+  `.harness/issues.jsonl`. A verdict file is overwritten by the next round; the log
+  is what remains.
+- `/crystal-harness:rules` reads the log for what has **come back** — an issue seen
+  in two or more rounds, a source file two or more distinct issues were traced to —
+  drafts a rule for each candidate worth one, and stores only those you approve.
+  One occurrence is an anecdote; a rule written from an anecdote is how a
+  checklist fills with noise.
+- A rule is a concrete `check` plus a **trigger that can be read from a diff**:
+  path globs and keywords in added lines. A rule with no trigger is refused. Before
+  each evaluation `rules.py match` writes the rules this round's diff triggers —
+  usually none — to `rules-to-check.json`, so a round is asked only about what its
+  own diff touches.
+- The evaluator does each listed check in the product and lists the rule ids in
+  the verdict. `validate_verdict.py --rules` rejects a verdict that leaves one
+  out. A rule that does not hold is a blocking issue.
+
+Rules are per project and live in `.harness/`, because a rule learned from one
+codebase's mistakes is noise in another. Neither agent can edit the rules, the log,
+or the list a round was handed.
+
+### Diagnosing a recurring issue
+
+Off by default (`diagnoseRecurringIssues: false`). The loop already tells a
+generator on its second attempt that a patch has failed and it must change
+approach, and stops for a human on the third. This adds something between: when a
+blocking issue comes back once, the plugin's `diagnose` workflow finds out why
+before the code is touched again.
+
+A patch that fails usually fails because its cause was guessed, and the first
+plausible explanation tends to be the one everyone keeps. So eight
+`harness-investigator` agents are kept apart on purpose:
+
+1. **Evidence** — one reproduces the issue and records what it sees, with no
+   explanations. It is the only one allowed to run the application until the end.
+2. **Hypotheses** — three argue the best case for a different *kind* of cause —
+   the data is wrong (`state`), the control flow is wrong (`wiring`), the report is
+   wrong (`premise`) — without seeing each other's work. Each must say why every
+   fix already tried would have failed, and name an experiment that could sink it.
+3. **Refutation** — three more each try to break one hypothesis.
+4. **Diagnosis** — one runs the experiments of what survived and writes the root
+   cause, what a fix has to change, and how to tell it worked, with a confidence
+   it is told never to round up.
+
+Investigators read and run. The guard confines their writes to the round's
+`diagnosis/` directory; the fix is still the generator's, which is handed the
+diagnosis and nothing else. It is the most expensive single step in the harness,
+and it runs only on an issue that has already cost a revision.
+
+### Inherited defects and flaky tests
+
+Two smaller rules, both about not being misled by where a failure appears to come
+from.
+
+`/crystal-harness:init` records the commit a run started from. A defect whose cause
+is unchanged since then is marked `preExisting` — inherited, not a regression. The
+mark is not a discount: the issue blocks exactly when it would otherwise, which in
+a final assessment means whenever the spec promises the behaviour. It changes how
+the defect is read and fixed, not whether it counts.
+
+A test that fails some of the time has a cause. The generator may not add a sleep,
+a retry or a longer timeout to make it pass, and the evaluator runs the suite once
+— a suite that needs a second run is failing. The test-change report lists every
+sleep and retry a round added to its tests, so the evaluator sees each.
 
 ### Team build
 
@@ -709,6 +795,12 @@ contract are not compensating for a model weakness. They are how a run survives 
 crash, a `/clear`, a new session, and a different machine. That does not expire with
 context length.
 
+**Diagnosis — off, and probably the last of these to earn a default.** *Signal to
+turn it on:* runs that end `blocked` on the same issue three times, where the
+second and third fixes were variations of the first. *Signal it is not paying:*
+its diagnoses come back `low` confidence, or name the cause the evaluator had
+already written in the verdict.
+
 **Team build — not on yet either, for the same reason.** *Signal to turn it on:*
 the product has a real seam and the single build is the long pole of the run.
 *Signal to turn it back off:* the ledger shows the builders together costing well
@@ -757,8 +849,8 @@ memory, a grader that is not the author — should not.
 ../.claude-plugin/marketplace.json   # repo-root marketplace catalog, points here via "./crystal-harness"
 crystal-harness/
 ├── .claude-plugin/plugin.json
-├── agents/{harness-planner, harness-generator, harness-evaluator}.md
-├── commands/{init,plan,build,qa,resume,status}.md
+├── agents/{harness-planner, harness-generator, harness-evaluator, harness-investigator}.md
+├── commands/{init,plan,build,qa,resume,status,rules}.md
 ├── skills/
 │   ├── harness-protocol/SKILL.md        # .harness/ contract, both JSON Schemas, handoff template, ledger
 │   ├── evaluation-lenses/SKILL.md       # the four lenses, the lens verdict file, reproducing an issue
@@ -767,7 +859,9 @@ crystal-harness/
 │   └── qa-rubric/
 │       ├── SKILL.md                     # six dimensions, anchors, thresholds, verdict.json schema
 │       └── references/calibration-examples.md
-├── workflows/evaluate.js                # parallel evaluation: one evaluator per lens, then reproductions
+├── workflows/
+│   ├── evaluate.js                      # parallel evaluation: one evaluator per lens, then reproductions
+│   └── diagnose.js                      # a recurring issue: evidence, three hypotheses, refutations, diagnosis
 ├── hooks/hooks.json
 ├── scripts/
 │   ├── guard_harness_artifacts.py       # the ownership policy the PreToolUse hook runs
@@ -776,6 +870,7 @@ crystal-harness/
 │   ├── test_changes.py                  # what a round did to the tests: deleted, skipped, re-pointed
 │   ├── merge_verdicts.py                # lens verdicts → one verdict.json + qa.md, or no verdict at all
 │   ├── team_build.py                    # split plan: validate, activate, per-builder commit, check, naming gate
+│   ├── rules.py                         # issue log, rule candidates, approved rules, which rules a diff triggers
 │   ├── validate_verdict.py              # verdict.json schema + what a pass may mean per mode
 │   ├── validate_contract.py             # contract.md criterion cap, scope size, id integrity
 │   ├── codex_review.py                  # find the codex plugin, review the diff, write codex-review.md
@@ -786,7 +881,8 @@ crystal-harness/
 │   ├── test_ledger.py
 │   ├── test_test_changes.py
 │   ├── test_merge_verdicts.py
-│   └── test_team_build.py
+│   ├── test_team_build.py
+│   └── test_rules.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -806,18 +902,19 @@ python3 crystal-harness/scripts/test_ledger.py
 python3 crystal-harness/scripts/test_test_changes.py
 python3 crystal-harness/scripts/test_merge_verdicts.py
 python3 crystal-harness/scripts/test_team_build.py
+python3 crystal-harness/scripts/test_rules.py
 ```
 
 No framework and no dependencies.
 
-**95 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
+**110 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
 Code actually sends, both denial policies, the `codex-review.md`
-and `test-changes.json` rows that deny both agents, the lens files, the cost ledger, a builder teammate held to its own paths and kept off tree-wide git commands, both escape routes (`..` traversal and a symlink
+and `test-changes.json` rows that deny both agents, the lens files, the cost ledger, a builder teammate held to its own paths and kept off tree-wide git commands, an investigator held to its findings, the project rules, both escape routes (`..` traversal and a symlink
 planted inside `.harness/`), case-folding, the Bash path, every legitimate write,
 and both fail-closed paths.
 
-**50 cases over the verdict validator**: the schema, the rule that a weakened test
-suite voids every carried pass, and every rule about what a
+**61 cases over the verdict validator**: the schema, the rule that a weakened test
+suite voids every carried pass, the rule that every triggered project rule is accounted for, and every rule about what a
 `pass` may mean in each verification mode — the three dimensions headless must
 leave `null`, the conditions a headless pass has to buy that waiver with, the
 thresholds themselves, and the fact that a degraded round never passes.
@@ -834,22 +931,27 @@ default and a configured value, missing or empty sections, duplicate ids, the 3�
 scope range, fenced examples not being counted, and an amendment or revision note
 that references an id the contract does not have.
 
-**21 cases over the test-change report**: each way of thinning a suite (a deleted
+**24 cases over the test-change report**: each way of thinning a suite (a deleted
 file, a removed case, a skip, an `.only`, an `xfail`, a re-pointed or removed test
 command, a test renamed out of the test tree) and each legitimate change that must
 not raise the alarm.
 
-**46 cases over the verdict merge**: the lower of two scores standing, every issue
+**47 cases over the verdict merge**: the lower of two scores standing, every issue
 kept, one failing lens failing the round, a reproduction result annotating but
 never removing an issue — and twenty-odd ways of refusing to merge at all, from a
 missing lens to one that graded a different commit.
 
-**54 cases over the team build**: every way two builders' paths can overlap, the
+**55 cases over the team build**: every way two builders' paths can overlap, the
 path forms a plan may not use, a commit that takes exactly one builder's files and
 leaves another's untouched, the leftovers `check` reports and to whom, and the
 gate that decides which agent may carry which name.
 
-**72 cases over the cost ledger**: usage summed across every request rather than
+**29 cases over the project rules**: a round recorded twice not doubling the log,
+what counts as having come back, a rule with no trigger or a trigger that matches
+everything being refused, and the matcher — including a rule's own keyword in
+`.harness/rules.json` not triggering that rule the moment it is added.
+
+**73 cases over the cost ledger**: usage summed across every request rather than
 the last, a final response that reaches the transcript after the hook has started
 still being counted, a streamed response counted once, a re-stopped agent's snapshot
 superseding rather than adding, the hook exiting 0 on every malformed input while
@@ -857,8 +959,9 @@ recording an unreadable transcript as `null` rather than zero, per-category
 pricing, entries from a pre-0.10.0 `state.json` kept out of token totals, and the budget
 caps with the hook that enforces them.
 
-These eight are tested and the prompts are not, because these eight fail
-*silently*. If the split-plan validator starts accepting overlapping paths, the
+These nine are tested and the prompts are not, because these nine fail
+*silently*. If the rule matcher stops triggering a rule, the evaluator is never
+asked the question the rule exists to ask. If the split-plan validator starts accepting overlapping paths, the
 build still completes — with one builder's work replaced by another's. If the test-change report stops noticing a deleted test, the suite
 goes back to vouching for itself. If the merge turns lenient, a round that
 measured less than it claims reads as a pass. If the ledger stops recording, or double-counts, the table still

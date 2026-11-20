@@ -169,6 +169,78 @@ enforced where it matters: whenever the file exists, validate the round's verdic
 with `--test-changes` (below), which rejects a pass carried from an earlier round
 on the strength of a suite this round weakened.
 
+## Project rules
+
+`.harness/rules.json` holds checks this project's evaluators have learned to make —
+each from a defect that came back, each approved by the human through
+`/crystal-harness:rules`. Two mechanical steps keep that memory working, in every
+round and in both evaluation modes:
+
+- **Before the evaluator**, after the test-changes step and with the same base:
+
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rules.py" match \
+    --base <the commit the round started from> \
+    --out .harness/sprints/NN/rules-to-check.json
+  ```
+
+  It writes the rules whose trigger this round's diff hits — usually none. Exit 1
+  means it could not read the diff or the rules file: it has removed any earlier
+  list; say one line and continue without one. Whenever the file exists, add
+  `--rules <that file>` to the `validate_verdict.py` call, which rejects a verdict
+  that does not account for every rule on the list.
+- **After a verdict validates**, pass or fail:
+
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rules.py" record .harness/sprints/NN/verdict.json
+  ```
+
+  The next round overwrites that verdict; this appends its issues to
+  `.harness/issues.jsonl`, which is what `/crystal-harness:rules` later reads.
+
+You never write a rule, the list, or the log yourself. When the run ends — done or
+blocked — and `rules.py candidates` has something to show, say so in one line and
+point at `/crystal-harness:rules`; proposing rules is a separate, human-approved step.
+
+## Diagnosing a recurring issue
+
+When `harness.diagnoseRecurringIssues` is `true` and a blocking issue's count in
+`repeatedIssueFingerprints` has just reached **2** — the generator fixed it once and
+it came back — do not spawn the next generator on a guess. Run the plugin's
+`diagnose` workflow first, once per such issue, one issue at a time:
+
+```json
+{
+  "roundDir": ".harness/final/02",
+  "issueId": "B-api-1",
+  "verdictPath": ".harness/final/02/verdict.json",
+  "commit": "<git rev-parse HEAD>",
+  "scratchDir": "<a directory outside the project, e.g. from mktemp -d>"
+}
+```
+
+Start it by name (`crystal-harness:diagnose`) with the Workflow tool and wait for it.
+One `harness-investigator` reproduces the issue and records what it sees; three
+argue different kinds of cause without seeing each other; three more try to break
+those arguments; one runs the deciding experiments and writes
+`<round dir>/diagnosis/<issue id>/diagnosis.md`. Investigators cannot edit source —
+the guard holds them to that directory.
+
+Then spawn the revising generator as usual and add one line to its brief: the path
+of the diagnosis. Do not summarise it. Journal the root cause and the confidence the
+workflow returned.
+
+- If the workflow returns `not_reproduced`, treat it as one failure to reproduce
+  under the stopping rule below and pass that to the generator instead of a
+  diagnosis.
+- If it returns `incomplete`, or `diagnosis.md` does not exist, journal that and go
+  on without one. A missing diagnosis never blocks the round.
+- Diagnose an issue once. If it reaches a third recurrence the stopping rule ends
+  the loop; a second diagnosis of the same issue is not a way around that.
+
+It costs eight agents per issue. That is the price of not spending a third revision
+— and then the human's attention — on the same wrong guess.
+
 ## Parallel evaluation
 
 When `harness.parallelEvaluation` is `true`, the "evaluate" step of a sprint round
@@ -407,7 +479,8 @@ revision, or escalate if revisions are exhausted.
 Run the codex review step described above against the sprint's diff, writing
 `.harness/sprints/NN/codex-review.md`. Skip it on exit 3 and carry on. Then run the
 test-changes step against the same base, writing
-`.harness/sprints/NN/test-changes.json`.
+`.harness/sprints/NN/test-changes.json`, and the `rules.py match` step of "Project
+rules", writing `.harness/sprints/NN/rules-to-check.json`.
 
 ### 5. Context reset — mandatory
 
@@ -456,7 +529,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_verdict.py" .harness/sprints/NN/
   --test-changes .harness/sprints/NN/test-changes.json
 ```
 
-Leave `--test-changes` off only when the test-changes step wrote no file. The
+Leave `--test-changes` off only when the test-changes step wrote no file, and add
+`--rules .harness/sprints/NN/rules-to-check.json` whenever that file exists. The
 script checks the full `qa-rubric` schema plus the consistency rules: a pass with
 blocking issues, failed criteria, a below-threshold score, or a `degraded` mode is
 a contradiction; a `headless` pass has to meet the extra conditions the rubric
@@ -484,6 +558,9 @@ next sprint.
 `currentRound` to `revisions + 1`. For each
 blocking issue id, increment `repeatedIssueFingerprints[id]`; drop ids that did not
 recur.
+
+If an issue's count has just reached 2 and `harness.diagnoseRecurringIssues` is
+`true`, run "Diagnosing a recurring issue" above before the next step.
 
 Then spawn a **fresh `harness-generator`** with `verdict.json` and the instruction to
 work the **blocking issues only**. Give it the file, not your reading of it — in
@@ -540,7 +617,8 @@ For round `NN` starting at 01:
    `.harness/final/NN/codex-review.md`. On round 01 in v2 mode the base is the
    commit the single build started from; on later rounds it is the previous
    round's `commit`. Then run the test-changes step against the same base,
-   writing `.harness/final/NN/test-changes.json`.
+   writing `.harness/final/NN/test-changes.json`, and `rules.py match`, writing
+   `.harness/final/NN/rules-to-check.json`.
 3. If `harness.parallelEvaluation` is `true`, run "Parallel evaluation" above for
    `.harness/final/NN/` and go to step 4. Otherwise spawn a **fresh
    `harness-evaluator`** with `config.json`, `spec.md`, the running
@@ -551,11 +629,13 @@ For round `NN` starting at 01:
    re-verifies failed and diff-affected criteria, and runs the full test suite as
    the regression check.
 4. Validate the verdict with `validate_verdict.py` as in the sprint loop, with
-   `--test-changes` when that file exists; append to
+   `--test-changes` and `--rules` when those files exist, then run `rules.py
+   record` on it; append to
    `finalRounds`, copying `verificationMode` into the summary as above.
 5. **Pass** → commit, set `phase: "done"`, write the final handoff, and report.
    **Fail** → set `phase: "final-building"` (leave `currentRound` at `NN` — the fix
-   is written into this round's directory), spawn a fresh generator against the
+   is written into this round's directory), run "Diagnosing a recurring issue" if
+   it applies, then spawn a fresh generator against the
    blocking issues only, which writes `.harness/final/NN/report.md`; then increment
    the round and return to step 1.
 6. Stop and ask the human when rounds would exceed `harness.maxFinalQaRounds`, or

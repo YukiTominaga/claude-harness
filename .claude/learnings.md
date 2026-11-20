@@ -186,3 +186,19 @@ builders on a two-part toy (API + CLI), everything forced to Sonnet 5.5:
   agent time in under 6 minutes of wall clock. A single generator built the API half
   alone for 1.07M. Not a like-for-like comparison, but there is no sign yet that a team
   is cheaper; what it buys is wall-clock time and narrower contexts.
+
+## 2026-11-20: the diagnose workflow on a fix that had already failed
+Toy API whose DELETE never persisted, with a plausible failed fix already applied
+(`db().commit()` — a commit on a brand-new connection). Eight investigators, Sonnet 5.5:
+- The `state` and `wiring` investigators, kept apart, both landed on the wrong-connection
+  commit; the `premise` investigator reported a dead end rather than inventing a cause, and
+  the workflow skipped its refutation. The final investigator confirmed the cause by
+  changing one line in a scratch copy and returned `high` confidence.
+- The project tree was untouched afterwards (`git status` clean apart from the diagnosis
+  files): the guard's "writes only under diagnosis/" held, and the scratch directory is
+  where the experiment happened.
+- With one obvious cause, three angles converge and the refutation stage adds little. The
+  design earns its cost on issues where the angles disagree; this toy could not show that.
+- Found by a test, not by a run: a rule's own keyword inside `.harness/rules.json` matched
+  the rule as soon as the file was committed. Anything that reads a round's diff has to
+  exclude `.harness/` — the harness's files are not the product.

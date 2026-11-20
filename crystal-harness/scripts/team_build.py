@@ -52,7 +52,10 @@ try:
 except ImportError:  # no flock: commits are then serialised only by git's own index lock
     fcntl = None
 
-ROLES = ("harness-planner", "harness-generator", "harness-evaluator")
+ROLES = ("harness-planner", "harness-generator", "harness-evaluator", "harness-investigator")
+# Roles the guard recognises by agent type and that are never teammates: under a
+# name, a hook would no longer see what they are.
+NEVER_NAMED = ("harness-evaluator", "harness-investigator")
 BUILDER_PREFIX = "builder-"
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
 ACTIVE = os.path.join(".harness", "split.json")
@@ -456,11 +459,11 @@ def cmd_gate(_args):
 
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or os.getcwd()
 
-    if leaf == "harness-evaluator":
+    if leaf in NEVER_NAMED:
         return deny(
-            f"crystal-harness: do not give a harness-evaluator a name ({name!r}). A named agent becomes "
+            f"crystal-harness: do not give a {leaf} a name ({name!r}). A named agent becomes "
             "a teammate when agent teams are enabled, hooks then see it under that name, and the "
-            "ownership guard can no longer tell it is an evaluator. Spawn it without `name`."
+            f"ownership guard can no longer tell it is a {leaf}. Spawn it without `name`."
         )
     if leaf != "harness-generator":
         if is_builder_name:

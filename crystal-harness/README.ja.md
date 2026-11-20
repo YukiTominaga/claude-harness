@@ -29,6 +29,8 @@ Anthropic の
 | **QA が重すぎて回せない** | ラウンドのコストの大半をブラウザ検証が占めるので、なし崩しにスキップされ、スキップしたことも記録されない。 | ブラウザ検証は config のフラグで切り替え、**3つのモードとして記録**する。スキップしたラウンドは verdict にそう書かれる。検証を求められたのに実行できなかったラウンドは絶対に pass しない。 |
 | **テストが自分で自分を保証する** | evaluator はプロジェクトのテストスイートを頼りにするが、それを書いたのは generator。落ちるテストを消したり skip したりしても、スイートは赤くならない。 | evaluator が動く前に、そのラウンドがテストに何をしたかをスクリプトが報告する。スイートが弱められていたら、以前の pass をスイートを根拠に持ち越すことはできず、verdict の validator がそれを強制する。 |
 | **上限のない run** | 「次で終わりそうだ」と見えるたびにラウンドが続く。 | 台帳をもとに確認する、任意のトークン上限とコスト上限。達したらループが止まって人間に聞き、人間が上限を上げるまで hook がハーネスのエージェントの起動を拒否する。 |
+| **同じ欠陥がまた出る** | evaluator は毎ラウンド、それまでのラウンドを何も知らない状態で始まる。一度見逃した種類の欠陥は、また見逃しうる。 | verdict より長く残る issue の記録と、そこから作る**プロジェクトルール**。ルールは、diff から読めるトリガーの付いた具体的な確認で、人間が承認したものだけが有効になる。ラウンドの diff がトリガーに当たると evaluator に渡され、verdict が1つでも漏らすと validator が却下する。 |
+| **当て推量の修正** | 「直した」はずの blocking issue が戻ってきて、次の試みは前回の小型版になる。 | 任意で、戻ってきた issue を、コードに触る前に**診断**する。証拠の収集、互いを見ずに立てる3つの競合仮説、それぞれへの反証、決着をつける実験の順に進む。 |
 
 ## インストール
 
@@ -58,9 +60,9 @@ claude
 claude --plugin-dir /absolute/path/to/claude-harness/crystal-harness
 ```
 
-インストールできたか確認します。インベントリに agent 3つ、MCP サーバー 1つ、hook 3つ、skill 11個
-が表示されれば正常です(6つのコマンドが、5つのリファレンス skill と合わせて skill として数えられます)。
-このほかに `evaluate` workflow が1つあります。
+インストールできたか確認します。インベントリに agent 4つ、MCP サーバー 1つ、hook 3つ、skill 12個
+が表示されれば正常です(7つのコマンドが、5つのリファレンス skill と合わせて skill として数えられます)。
+このほかに `evaluate` と `diagnose` の2つの workflow があります。
 
 ```bash
 claude plugin details crystal-harness
@@ -113,6 +115,7 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 /crystal-harness:status                # run の現在地と、ここまでのコスト
 /crystal-harness:qa [n|final]          # 現在の作業ツリーを単独で採点
 /crystal-harness:resume                # クラッシュ、/clear、新しいセッションの後に再開
+/crystal-harness:rules                 # 戻ってきた欠陥を、承認済みのプロジェクトルールにする
 ```
 
 > プラグインのコマンドには名前空間が付きます。実際に打つのは `/init` ではなく
@@ -129,6 +132,8 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 ├── spec.md              # planner の出力: プロダクト仕様
 ├── state.json           # run の状態
 ├── ledger.jsonl         # コスト台帳。hook がエージェントの transcript から追記する
+├── issues.jsonl         # 検証を通ったすべての verdict が挙げた issue の記録
+├── rules.json           # 人間が承認したプロジェクトルール
 ├── handoff.md           # コンテキストリセット用の引き継ぎファイル(毎回書き直す)
 ├── journal.md           # 追記のみの、人間向けログ
 ├── artifacts/           # Playwright の作業出力。browser モードのみ(gitignore 対象)
@@ -137,6 +142,8 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 │   ├── report.md        # generator の完了報告 + セルフチェック
 │   ├── codex-review.md  # diff の独立レビュー(codex が入っている場合)
 │   ├── test-changes.json # そのラウンドがテストに何をしたか(スクリプトが出力)
+│   ├── rules-to-check.json # このラウンドの diff が当たったプロジェクトルール
+│   ├── diagnosis/       # 診断 workflow のときだけ: 証拠、仮説、診断
 │   ├── lenses/          # 並列評価のときだけ: 観点ごとの verdict
 │   ├── qa.md            # ラウンドの判定(人間向け)
 │   ├── verdict.json     # ラウンドの判定(機械向け)
@@ -218,6 +225,10 @@ hook は少しだけ待つ必要もあります。Claude Code がエージェン
   evaluator が書けるなら、自分がこれから引用する証拠を編集できてしまう。
 - `harness-generator` がラウンドの `lenses/` の下に何かを書くこと。並列評価では、そこにある
   ファイルが verdict そのものだから。
+- **どちらか一方でも** `rules.json`、`issues.jsonl`、ラウンドの `rules-to-check.json` を書くこと。
+  ルールを編集できる generator は、自分を捕まえるはずのルールを消せてしまう。
+- `harness-investigator` がラウンドの `diagnosis/` 以外に書くこと。調査役の仕事は診断であり、
+  自分で書き換えたツリーに対する診断は、別のツリーの診断になってしまう。
 
 同じ hook が、オーケストレーターのファイル(`state.json`、`handoff.md`、`journal.md`、
 `config.json`、`spec.md`)と `ledger.jsonl` への両者の書き込みも止めます。台帳を編集できる
@@ -281,6 +292,7 @@ hook は少しだけ待つ必要もあります。Claude Code がエージェン
     "codexReview": "auto",            // "auto" | true | false
     "teamBuild": false,               // true → 最初のビルドを builder の teammate に分担させる
     "maxBuilders": 3,                 // チームビルドのときだけ: builder の数の上限
+    "diagnoseRecurringIssues": false, // true → 戻ってきた blocking issue を診断する
     "parallelEvaluation": false,      // true → 観点ごとに evaluator を立て、スクリプトで統合する
     "reproduceBlockingIssues": true,  // 並列評価のときだけ: blocking issue を1件ずつ再現させる
     "maxSprints": 12,
@@ -342,6 +354,7 @@ headless モードでは、バックエンドも実行可能なテストスイ�
 | `harness-planner` | `claude-opus-5-5` | `high` | アイデアを仕様へと構造的に展開する |
 | `harness-generator` | `claude-opus-5-5` | `xhigh` | 長時間の一貫性と難しい実装 |
 | `harness-evaluator` | `claude-opus-5-5` | `high` | 基準との照合だけでなく、デザインと深さを判断する |
+| `harness-investigator` | `claude-opus-5-5` | `high` | generator が一度見誤った原因を突き止める |
 
 **コストを動かすレバーはモデルの格ではなく effort です。** 3つのエージェントはすべて Opus 5.5 で動きます。
 generator を `xhigh` から `medium` に下げるほうが、どれかのエージェントを Sonnet 5 のような安いモデルに
@@ -515,6 +528,68 @@ generator には、正しくないまま通す手段があります。落ちる�
 「誰も稼いでいない pass」だからです。
 
 codex レビューと同じく、このファイルはどちらのエージェントも書けません。guard が両方を止めます。
+
+### プロジェクトルール
+
+コンテキストリセットとは、evaluator が毎ラウンド、以前のラウンドを何も知らない状態で始まるという
+ことです。それが狙いですが、同時に、一度見逃した種類の欠陥はまた見逃しうるということでもあります。
+プロジェクトルールは、リセットを越えて残る記憶です。データとして持ち、コードで適用します。
+
+- 検証を通った verdict が出るたびに、`scripts/rules.py record` がその issue を
+  `.harness/issues.jsonl` に追記する。verdict のファイルは次のラウンドで上書きされるが、この記録は残る。
+- `/crystal-harness:rules` が記録を読み、**戻ってきたもの**(2ラウンド以上に現れた issue、2つ以上の
+  別々の issue の原因とされたソースファイル)を拾う。価値のある候補にはルールの下書きを作り、
+  あなたが承認したものだけを保存する。1回だけ起きたことは逸話にすぎず、逸話から作ったルールは
+  チェックリストを雑音で埋める。
+- ルールは、具体的な確認内容(`check`)と、**diff から読めるトリガー**(パスの glob と、追加行に
+  含まれるキーワード)の組。トリガーのないルールは拒否される。評価の前に `rules.py match` が、
+  このラウンドの diff が当たったルール(たいていはゼロ件)を `rules-to-check.json` に書く。
+  ラウンドが尋ねられるのは、自分の diff が触れた範囲のことだけになる。
+- evaluator は、挙げられた確認をプロダクト上で1つずつ行い、ルールの ID を verdict に列挙する。
+  1つでも漏らした verdict は `validate_verdict.py --rules` が却下する。成り立たなかったルールは
+  blocking issue になる。
+
+ルールはプロジェクトごとで、`.harness/` の中に置きます。あるコードベースの失敗から学んだルールは、
+別のコードベースでは雑音だからです。ルール、記録、ラウンドに渡された一覧のどれも、エージェントは
+編集できません。
+
+### 再発した issue の診断
+
+デフォルトはオフ(`diagnoseRecurringIssues: false`)です。ループはもともと、2回目の修正に入る
+generator に「パッチは失敗した、アプローチを変えよ」と伝え、3回目で人間のために止まります。
+この機能はその間に入ります。blocking issue が一度戻ってきたら、コードにもう一度触る前に、
+プラグインの `diagnose` workflow が原因を突き止めます。
+
+パッチが失敗するのは、たいてい原因を当て推量したからです。そして最初にもっともらしく見えた説明が、
+全員の頭に残り続けます。そこで8体の `harness-investigator` を、意図的に互いから切り離します。
+
+1. **証拠** — 1体が issue を再現し、見えたものを説明抜きで記録する。最後の段階まで、アプリを
+   動かしてよいのはこの1体だけ。
+2. **仮説** — 3体が、*種類*の異なる原因について最も強い主張を組み立てる。データが違う(`state`)、
+   制御の流れが違う(`wiring`)、報告のほうが違う(`premise`)の3つで、互いの成果は見ない。
+   各自、これまでの修正がなぜ失敗したはずかを説明し、自分の仮説を沈めうる実験を1つ挙げる。
+3. **反証** — さらに3体が、仮説を1つずつ崩しにかかる。
+4. **診断** — 1体が、生き残った仮説の実験を実行し、根本原因、修正が変えなければならないこと、
+   直ったと分かる方法を書く。確信度は、決して切り上げないよう指示されている。
+
+調査役は読んで動かすだけです。guard が書き込みをラウンドの `diagnosis/` に限ります。修正は
+あくまで generator の仕事で、generator には診断だけが渡されます。ハーネスの中で最も高価な
+単一の手順ですが、動くのは、すでに修正1回分のコストを使った issue に対してだけです。
+
+### 引き継いだ欠陥と不安定なテスト
+
+小さなルールが2つあります。どちらも、失敗の出どころを見誤らないためのものです。
+
+`/crystal-harness:init` は、run が始まった時点のコミットを記録します。原因がそのコミットから
+変わっていない欠陥には `preExisting` の印が付きます。リグレッションではなく、引き継いだものという
+意味です。この印は割引ではありません。issue が blocking になる条件は変わらず、final assessment では
+仕様がその振る舞いを約束している限り blocking です。変わるのは、欠陥の読み方と直し方であって、
+数えるかどうかではありません。
+
+ときどき落ちるテストには原因があります。generator は、sleep、リトライ、タイムアウトの延長で
+テストを通すことを禁じられています。evaluator はスイートを1回だけ実行し、2回目で通るスイートは
+落ちているものとして扱います。テスト変更レポートは、ラウンドがテストに追加した sleep とリトライを
+すべて列挙するので、evaluator は1つずつ確認できます。
 
 ### チームビルド
 
@@ -728,6 +803,14 @@ planner が出すのと同じ機能一覧を作る。
 モデルの弱点を補うためのものではありません。クラッシュ、`/clear`、新しいセッション、別のマシンを
 run が乗り越えるための仕組みです。コンテキスト長が伸びても古くなりません。
 
+**診断 — オフです。おそらく、これらの中で最後までデフォルトにならない機能です。**
+
+*オンにしてよい信号:* 同じ issue で3回 fail して `blocked` で終わる run があり、2回目と3回目の
+修正が1回目の変形だった。
+
+*コストに見合っていない信号:* 診断の確信度が `low` で返ってくる。または、evaluator がすでに
+verdict に書いていた原因を、診断がそのまま挙げている。
+
 **チームビルド — これもまだオンにしていません。理由は同じです。**
 
 *オンにしてよい信号:* プロダクトに本当の分け目があり、1回のビルドが run の中で最も時間のかかる
@@ -774,8 +857,8 @@ verdict が、同じビルドに対して1体の evaluator が返すものと変
 ../.claude-plugin/marketplace.json   # リポジトリ直下のマーケットプレイス定義。"./crystal-harness" でここを指す
 crystal-harness/
 ├── .claude-plugin/plugin.json
-├── agents/{harness-planner, harness-generator, harness-evaluator}.md
-├── commands/{init,plan,build,qa,resume,status}.md
+├── agents/{harness-planner, harness-generator, harness-evaluator, harness-investigator}.md
+├── commands/{init,plan,build,qa,resume,status,rules}.md
 ├── skills/
 │   ├── harness-protocol/SKILL.md        # .harness/ の約束事、2つの JSON Schema、handoff テンプレート、台帳
 │   ├── evaluation-lenses/SKILL.md       # 4つの観点、観点ごとの verdict ファイル、issue の再現
@@ -784,7 +867,9 @@ crystal-harness/
 │   └── qa-rubric/
 │       ├── SKILL.md                     # 6観点、アンカー、閾値、verdict.json のスキーマ
 │       └── references/calibration-examples.md
-├── workflows/evaluate.js                # 並列評価: 観点ごとに evaluator 1体、続いて issue の再現
+├── workflows/
+│   ├── evaluate.js                      # 並列評価: 観点ごとに evaluator 1体、続いて issue の再現
+│   └── diagnose.js                      # 再発した issue: 証拠、3つの仮説、反証、診断
 ├── hooks/hooks.json
 ├── scripts/
 │   ├── guard_harness_artifacts.py       # PreToolUse hook が実行する担当範囲のポリシー
@@ -793,6 +878,7 @@ crystal-harness/
 │   ├── test_changes.py                  # ラウンドがテストに何をしたか: 削除、skip、コマンドの差し替え
 │   ├── merge_verdicts.py                # 観点ごとの verdict → 1つの verdict.json + qa.md。無理なら何も出さない
 │   ├── team_build.py                    # 分担表: 検査、有効化、builder ごとのコミット、後始末の検査、名前のゲート
+│   ├── rules.py                         # issue の記録、ルールの候補、承認済みルール、diff が当たるルールの判定
 │   ├── validate_verdict.py              # verdict.json のスキーマ + モードごとに pass が意味してよいこと
 │   ├── validate_contract.py             # contract.md の基準数の上限、スコープの大きさ、ID の整合性
 │   ├── codex_review.py                  # codex プラグインを探し、diff をレビューし、codex-review.md を書く
@@ -803,7 +889,8 @@ crystal-harness/
 │   ├── test_ledger.py
 │   ├── test_test_changes.py
 │   ├── test_merge_verdicts.py
-│   └── test_team_build.py
+│   ├── test_team_build.py
+│   └── test_rules.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -823,19 +910,20 @@ python3 crystal-harness/scripts/test_ledger.py
 python3 crystal-harness/scripts/test_test_changes.py
 python3 crystal-harness/scripts/test_merge_verdicts.py
 python3 crystal-harness/scripts/test_team_build.py
+python3 crystal-harness/scripts/test_rules.py
 ```
 
 フレームワークも依存ライブラリも不要です。
 
-**担当範囲の guard に 95 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
+**担当範囲の guard に 110 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
 2つの拒否ポリシー、両エージェントを拒否する `codex-review.md` と `test-changes.json` の行、
 観点ごとのファイル、コスト台帳、自分の担当パスに留められ作業ツリー全体に効く git コマンドを
-禁じられた builder、
+禁じられた builder、自分の調査結果だけを書ける調査役、プロジェクトルール、
 2つの抜け道(`..` によるディレクトリ遡りと `.harness/` 内に仕込んだシンボリックリンク)、大文字小文字の
 同一視、Bash の経路、正当な書き込みすべて、2つの fail-closed の経路。
 
-**verdict の validator に 50 ケース**: スキーマ、弱められたテストスイートは持ち越しの pass を
-すべて無効にするという規則、そして各検証モードで `pass` が意味してよいことについての
+**verdict の validator に 61 ケース**: スキーマ、弱められたテストスイートは持ち越しの pass を
+すべて無効にするという規則、当たったプロジェクトルールをすべて報告するという規則、そして各検証モードで `pass` が意味してよいことについての
 全ルール。headless で `null` にしなければならない3観点、headless の pass がその免除と引き換えに満たす
 べき条件、閾値そのもの、degraded のラウンドは絶対に pass しないこと。
 
@@ -849,26 +937,31 @@ exit code の約束事を両方向から確認する。
 超過・未満、セクションの欠落や空、ID の重複、スコープ 3〜7 の範囲、コードフェンス内の例を数えないこと、
 contract に存在しない ID を参照する amendment や修正メモ。
 
-**テスト変更レポートに 21 ケース**: スイートを薄くする方法のそれぞれ(ファイルの削除、ケースの削除、
+**テスト変更レポートに 24 ケース**: スイートを薄くする方法のそれぞれ(ファイルの削除、ケースの削除、
 skip、`.only`、`xfail`、テストコマンドの差し替えや削除、テストのツリー外へのリネーム)と、警告を
 出してはいけない正当な変更のそれぞれ。
 
-**verdict の統合に 46 ケース**: 2つの点のうち低いほうが残ること、すべての issue が残ること、1つの
+**verdict の統合に 47 ケース**: 2つの点のうち低いほうが残ること、すべての issue が残ること、1つの
 観点の fail がラウンドを fail にすること、再現結果は issue に注記されるだけで issue を消さないこと。
 加えて、観点の欠落から別コミットを採点したファイルまで、統合そのものを拒否する20通りあまり。
 
-**チームビルドに 54 ケース**: 2体の担当パスが重なりうるすべての形、分担表で使えないパスの書き方、
+**チームビルドに 55 ケース**: 2体の担当パスが重なりうるすべての形、分担表で使えないパスの書き方、
 1体の builder のファイルだけを取り込み他の builder のファイルには触れないコミット、`check` が報告する
 残り物とその宛先、どのエージェントにどの名前を許すかを決めるゲート。
 
-**コスト台帳に 72 ケース**: 最後の1リクエストではなく全リクエストを合計すること、hook の開始後に
+**プロジェクトルールに 29 ケース**: 同じラウンドを2回記録しても記録が倍にならないこと、何をもって
+「戻ってきた」とするか、トリガーのないルールや何にでも当たるトリガーの拒否、そして判定の処理。
+`.harness/rules.json` に書かれたルール自身のキーワードが、追加した瞬間にそのルールを発火させない
+ことも含む。
+
+**コスト台帳に 73 ケース**: 最後の1リクエストではなく全リクエストを合計すること、hook の開始後に
 transcript へ届いた最後の応答も数えること、ストリームで複数行に
 分かれた応答を1回だけ数えること、複数回停止したエージェントのスナップショットを加算せず置き換えること、
 hook がどんな不正な入力でも exit 0 で終わり、読めない transcript をゼロではなく `null` として記録
 すること、区分ごとの料金計算、0.10.0 より前の `state.json` のエントリをトークン合計に入れないこと、
 予算上限とそれを強制する hook。
 
-プロンプトではなくこの8つをテストしているのは、この8つが*気づかれないまま*壊れるからです。
+プロンプトではなくこの9つをテストしているのは、この9つが*気づかれないまま*壊れるからです。
 
 - contract の validator が拒否しなくなると、contract は再び上限を超えて膨らみ、run のすべての
   フェーズが遅く高くなる。
@@ -880,6 +973,8 @@ hook がどんな不正な入力でも exit 0 で終わり、読めない transc
   その表に基づいて下される。
 - テスト変更レポートが消されたテストに気づかなくなると、スイートは再び自分で自分を保証するようになる。
 - 統合が甘くなると、主張より少ししか測っていないラウンドが pass に見える。
+- ルールの判定がルールを発火させなくなると、そのルールが尋ねるはずだった問いを、evaluator は
+  二度と尋ねられない。
 - 分担表の validator が重なったパスを受け入れるようになっても、ビルドは完了する。ただし、ある
   builder の成果が別の builder の成果で置き換えられている。
 
