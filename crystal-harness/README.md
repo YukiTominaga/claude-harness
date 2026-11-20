@@ -54,8 +54,8 @@ Restart Claude Code. Or, for a throwaway trial without installing:
 claude --plugin-dir /absolute/path/to/claude-harness/crystal-harness
 ```
 
-Verify — the inventory should show 3 agents, 1 MCP server, 3 hooks, and 10 skills (the
-six commands are counted as skills alongside the four reference skills), plus the
+Verify — the inventory should show 3 agents, 1 MCP server, 3 hooks, and 11 skills (the
+six commands are counted as skills alongside the five reference skills), plus the
 `evaluate` workflow:
 
 ```bash
@@ -271,6 +271,8 @@ from `hooks/hooks.json` (python3 is assumed to be present).
     "contextReset": true,             // false → keep one agent across phases
     "browserVerification": false,     // true → drive the UI with Playwright
     "codexReview": "auto",            // "auto" | true | false
+    "teamBuild": false,               // true → first build split across builder teammates
+    "maxBuilders": 3,                 // team build only: upper bound on builders
     "parallelEvaluation": false,      // true → one evaluator per lens, merged by a script
     "reproduceBlockingIssues": true,  // parallel evaluation only: re-try each blocking issue
     "maxSprints": 12,
@@ -492,6 +494,51 @@ alarm costs one fully verified round and a miss costs a pass nobody earned.
 
 Like the codex review, neither agent may write the file; the guard blocks both.
 
+### Team build
+
+Off by default (`teamBuild: false`). When on, the first build of a round is done by
+up to `maxBuilders` generators working at the same time, each an agent-team
+teammate named `builder-<name>`. Two generators on one working tree collide —
+that is why the harness otherwise runs one at a time — so a team build happens
+only under a **split plan**, and the parts of that agreement a script can check
+are checked rather than asked for.
+
+1. A generator, alone, writes `split.json`: for each builder a `scope` and the
+   paths it `owns`, plus the **pinned interfaces** between them — routes and
+   payload shapes, table names, exit codes — so nobody has to wait for anybody
+   else's code to exist. If the work has no real seam it writes a one-builder
+   plan, and the build runs as a normal single generator.
+2. `scripts/team_build.py validate` rejects a plan in which two builders' paths
+   overlap, a path uses a wildcard it cannot reason about, or two builders have
+   nothing pinned between them.
+3. The builders run. The ownership guard holds each to its own paths: a write
+   anywhere else is denied, and the builder is told to ask the owner. A builder
+   cannot edit the plan that bounds it.
+4. Builders commit through `team_build.py commit`, which stages exactly the
+   committing builder's paths under a lock. `git add`, `commit`, `stash`,
+   `reset`, `checkout` and their relatives are denied to builders, because each
+   acts on the whole tree while the others are mid-edit in it.
+5. When they stop, `team_build.py check` lists what the plan does not allow —
+   uncommitted work, a changed path nobody owns, a missing report — addressed to
+   the builder who can fix it. Then `team_build.py report` joins the builders'
+   own reports into the `report.md` the evaluator reads.
+
+Fixes after a failed QA round are not split. They work a short list of blocking
+issues and go to one generator, as always. Builders are never reused across
+rounds, so the harness's context-reset rule holds.
+
+One thing had to be closed for this to be safe. Hooks see a teammate under the
+**name** the lead gave it, not the agent type it was spawned from, so the guard —
+which recognises a role by agent type — would not see a generator started under
+an arbitrary name. A second hook therefore decides who may be named what: a
+`harness-generator` only `builder-<x>` for a builder `x` in the active plan, and
+a `harness-evaluator` not at all. That hook matters even with `teamBuild` off,
+for anyone who has agent teams enabled.
+
+It needs agent teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), which are
+experimental and work only in an interactive session. Without them the build
+says so in one line and uses a single generator.
+
 ### Parallel evaluation
 
 Off by default (`parallelEvaluation: false`). When on, a round is graded by one
@@ -662,8 +709,15 @@ contract are not compensating for a model weakness. They are how a run survives 
 crash, a `/clear`, a new session, and a different machine. That does not expire with
 context length.
 
-**Parallel evaluation — not on yet, and the evidence decides.** It is the one
-component here that was added rather than waiting to be stripped, so it ships off.
+**Team build — not on yet either, for the same reason.** *Signal to turn it on:*
+the product has a real seam and the single build is the long pole of the run.
+*Signal to turn it back off:* the ledger shows the builders together costing well
+over what one generator did on a comparable spec, or the evaluator's first round
+keeps finding defects at the boundary the split plan drew.
+
+**Parallel evaluation — not on yet, and the evidence decides.** It and team build
+are the components here that were added rather than waiting to be stripped, so
+they ship off.
 *Signal to turn it on:* a single evaluator's rounds keep missing defects that a
 later round or a human finds in one specific area — the API surface, the tests,
 the code. *Signal to turn it back off:* the ledger shows the lenses costing a
@@ -708,6 +762,7 @@ crystal-harness/
 ├── skills/
 │   ├── harness-protocol/SKILL.md        # .harness/ contract, both JSON Schemas, handoff template, ledger
 │   ├── evaluation-lenses/SKILL.md       # the four lenses, the lens verdict file, reproducing an issue
+│   ├── team-build/SKILL.md              # the split plan, and the rules a builder teammate works under
 │   ├── sprint-contract/SKILL.md         # pinned interfaces and testable acceptance criteria
 │   └── qa-rubric/
 │       ├── SKILL.md                     # six dimensions, anchors, thresholds, verdict.json schema
@@ -720,6 +775,7 @@ crystal-harness/
 │   ├── ledger.py                        # cost ledger: SubagentStop hook, codex append, report, budget gate
 │   ├── test_changes.py                  # what a round did to the tests: deleted, skipped, re-pointed
 │   ├── merge_verdicts.py                # lens verdicts → one verdict.json + qa.md, or no verdict at all
+│   ├── team_build.py                    # split plan: validate, activate, per-builder commit, check, naming gate
 │   ├── validate_verdict.py              # verdict.json schema + what a pass may mean per mode
 │   ├── validate_contract.py             # contract.md criterion cap, scope size, id integrity
 │   ├── codex_review.py                  # find the codex plugin, review the diff, write codex-review.md
@@ -729,7 +785,8 @@ crystal-harness/
 │   ├── test_codex_review.py
 │   ├── test_ledger.py
 │   ├── test_test_changes.py
-│   └── test_merge_verdicts.py
+│   ├── test_merge_verdicts.py
+│   └── test_team_build.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -748,13 +805,14 @@ python3 crystal-harness/scripts/test_codex_review.py
 python3 crystal-harness/scripts/test_ledger.py
 python3 crystal-harness/scripts/test_test_changes.py
 python3 crystal-harness/scripts/test_merge_verdicts.py
+python3 crystal-harness/scripts/test_team_build.py
 ```
 
 No framework and no dependencies.
 
-**66 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
+**95 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
 Code actually sends, both denial policies, the `codex-review.md`
-and `test-changes.json` rows that deny both agents, the lens files, the cost ledger, both escape routes (`..` traversal and a symlink
+and `test-changes.json` rows that deny both agents, the lens files, the cost ledger, a builder teammate held to its own paths and kept off tree-wide git commands, both escape routes (`..` traversal and a symlink
 planted inside `.harness/`), case-folding, the Bash path, every legitimate write,
 and both fail-closed paths.
 
@@ -786,7 +844,12 @@ kept, one failing lens failing the round, a reproduction result annotating but
 never removing an issue — and twenty-odd ways of refusing to merge at all, from a
 missing lens to one that graded a different commit.
 
-**71 cases over the cost ledger**: usage summed across every request rather than
+**54 cases over the team build**: every way two builders' paths can overlap, the
+path forms a plan may not use, a commit that takes exactly one builder's files and
+leaves another's untouched, the leftovers `check` reports and to whom, and the
+gate that decides which agent may carry which name.
+
+**72 cases over the cost ledger**: usage summed across every request rather than
 the last, a final response that reaches the transcript after the hook has started
 still being counted, a streamed response counted once, a re-stopped agent's snapshot
 superseding rather than adding, the hook exiting 0 on every malformed input while
@@ -794,8 +857,9 @@ recording an unreadable transcript as `null` rather than zero, per-category
 pricing, entries from a pre-0.10.0 `state.json` kept out of token totals, and the budget
 caps with the hook that enforces them.
 
-These seven are tested and the prompts are not, because these seven fail
-*silently*. If the test-change report stops noticing a deleted test, the suite
+These eight are tested and the prompts are not, because these eight fail
+*silently*. If the split-plan validator starts accepting overlapping paths, the
+build still completes — with one builder's work replaced by another's. If the test-change report stops noticing a deleted test, the suite
 goes back to vouching for itself. If the merge turns lenient, a round that
 measured less than it claims reads as a pass. If the ledger stops recording, or double-counts, the table still
 looks plausible and every strip decision is made on it. If the contract validator stops rejecting, contracts drift back past

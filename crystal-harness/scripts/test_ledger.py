@@ -196,6 +196,15 @@ def test_kinds():
         check("default workflow agent is role 'other'", by_id.get("w1", {}).get("agent") == "other")
         check("teammate kind from the meta sidecar", by_id.get("tm1", {}).get("kind") == "teammate", by_id.get("tm1"))
         check("teammate named by the lead is role 'other'", by_id.get("tm1", {}).get("agent") == "other")
+
+        b = os.path.join(root, "t", "subagents", "agent-b1.jsonl")
+        write_transcript(b, [assistant("m", "2026-11-20T04:00:00.000Z", usage(1, 1, 1, 1))])
+        with open(b[: -len(".jsonl")] + ".meta.json", "w", encoding="utf-8") as f:
+            json.dump({"agentType": "builder-api", "taskKind": "in_process_teammate"}, f)
+        run_hook(root, stop_event(root, "builder-api", "b1", b))
+        entry = {e["agentId"]: e for e in ledger_lines(root)}.get("b1", {})
+        check("a team-build builder is recorded as a generator teammate",
+              entry.get("agent") == "harness-generator" and entry.get("kind") == "teammate", entry)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

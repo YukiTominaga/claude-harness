@@ -58,8 +58,8 @@ claude
 claude --plugin-dir /absolute/path/to/claude-harness/crystal-harness
 ```
 
-インストールできたか確認します。インベントリに agent 3つ、MCP サーバー 1つ、hook 3つ、skill 10個
-が表示されれば正常です(6つのコマンドが、4つのリファレンス skill と合わせて skill として数えられます)。
+インストールできたか確認します。インベントリに agent 3つ、MCP サーバー 1つ、hook 3つ、skill 11個
+が表示されれば正常です(6つのコマンドが、5つのリファレンス skill と合わせて skill として数えられます)。
 このほかに `evaluate` workflow が1つあります。
 
 ```bash
@@ -279,6 +279,8 @@ hook は少しだけ待つ必要もあります。Claude Code がエージェン
     "contextReset": true,             // false → フェーズをまたいで同じエージェントを使い続ける
     "browserVerification": false,     // true → Playwright で UI を操作する
     "codexReview": "auto",            // "auto" | true | false
+    "teamBuild": false,               // true → 最初のビルドを builder の teammate に分担させる
+    "maxBuilders": 3,                 // チームビルドのときだけ: builder の数の上限
     "parallelEvaluation": false,      // true → 観点ごとに evaluator を立て、スクリプトで統合する
     "reproduceBlockingIssues": true,  // 並列評価のときだけ: blocking issue を1件ずつ再現させる
     "maxSprints": 12,
@@ -514,6 +516,45 @@ generator には、正しくないまま通す手段があります。落ちる�
 
 codex レビューと同じく、このファイルはどちらのエージェントも書けません。guard が両方を止めます。
 
+### チームビルド
+
+デフォルトはオフ(`teamBuild: false`)です。オンにすると、ラウンドの最初のビルドを、最大
+`maxBuilders` 体の generator が同時に進めます。それぞれが `builder-<名前>` という名前の agent team の
+teammate です。1つの作業ツリーに generator が2体いると衝突します(ハーネスが普段1体ずつ動かすのは
+そのためです)。そこでチームビルドは**分担表(split plan)**がある場合に限って行い、その取り決めのうち
+スクリプトで検査できる部分は、頼むのではなく検査します。
+
+1. generator 1体が単独で `split.json` を書く。builder ごとの担当範囲(`scope`)と担当パス(`owns`)、
+   そして builder 間の**固定インターフェース**(ルートとペイロードの形、テーブル名、終了コードなど)を
+   定める。こうしておけば、誰も他人のコードができるのを待たずに済む。作業に分け目がなければ builder
+   1体の分担表を書き、ビルドは通常どおり generator 1体で進む。
+2. `scripts/team_build.py validate` が、2体の担当パスが重なっている分担表、判定できないワイルドカードを
+   使った分担表、複数の builder がいるのにインターフェースを何も固定していない分担表を却下する。
+3. builder が動く。担当範囲の guard が、各 builder を自分の担当パスに留める。それ以外への書き込みは
+   拒否され、builder は担当者に依頼するよう促される。自分を縛る分担表を builder が書き換えることは
+   できない。
+4. builder は `team_build.py commit` を通してコミットする。このスクリプトは、ロックを取ったうえで、
+   コミットする builder の担当パスだけをステージする。`git add`、`commit`、`stash`、`reset`、
+   `checkout` とその仲間は builder には拒否される。どれも作業ツリー全体に作用し、他の builder が
+   編集している最中だから。
+5. builder が止まったら、`team_build.py check` が、分担表で許されていないもの(未コミットの作業、
+   誰の担当でもないのに変更されたパス、欠けているレポート)を、直せる builder 宛てに列挙する。
+   続いて `team_build.py report` が、builder 自身のレポートを、evaluator が読む `report.md` にまとめる。
+
+QA で fail した後の修正は分担しません。対象は少数の blocking issue なので、今までどおり generator
+1体に任せます。builder はラウンドをまたいで使い回さないので、ハーネスのコンテキストリセットの原則は
+保たれます。
+
+これを安全にするために、1つ塞いだ穴があります。hook に届くのは、teammate が起動された元の
+エージェント種別ではなく、リードが付けた**名前**です。guard は種別で役割を見分けるので、任意の名前で
+起動された generator は guard から見えません。そこで、誰にどんな名前を付けてよいかを2つ目の hook が
+決めています。`harness-generator` に付けてよい名前は、有効な分担表にある builder `x` に対する
+`builder-<x>` だけで、`harness-evaluator` には名前を付けられません。この hook は `teamBuild` がオフでも、
+agent teams を有効にしている人すべてに関係します。
+
+チームビルドには agent teams(`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`)が必要です。実験的機能で、
+対話セッションでしか動きません。有効でない場合、ビルドは1行でそう伝えて generator 1体で進みます。
+
 ### 並列評価
 
 デフォルトはオフ(`parallelEvaluation: false`)です。オンにすると、1体の evaluator がすべてを見る
@@ -687,8 +728,16 @@ planner が出すのと同じ機能一覧を作る。
 モデルの弱点を補うためのものではありません。クラッシュ、`/clear`、新しいセッション、別のマシンを
 run が乗り越えるための仕組みです。コンテキスト長が伸びても古くなりません。
 
-**並列評価 — まだオンにしていません。証拠で決めてください。** ここにある部品の中で唯一、外される
-のを待つのではなく後から足したものなので、オフの状態で出荷しています。
+**チームビルド — これもまだオンにしていません。理由は同じです。**
+
+*オンにしてよい信号:* プロダクトに本当の分け目があり、1回のビルドが run の中で最も時間のかかる
+部分になっている。
+
+*オフに戻す信号:* 台帳で builder の合計が、同程度の仕様を generator 1体で作ったときを大きく上回る。
+または、evaluator の最初のラウンドが、分担表が引いた境界で欠陥を見つけ続ける。
+
+**並列評価 — まだオンにしていません。証拠で決めてください。** 並列評価とチームビルドは、ここにある
+部品の中で、外されるのを待つのではなく後から足したものなので、オフの状態で出荷しています。
 
 *オンにしてよい信号:* 1体の evaluator のラウンドが、特定の領域(API、テスト、コード)の欠陥を
 見逃し続け、後のラウンドや人間がそれを見つけている。
@@ -730,6 +779,7 @@ crystal-harness/
 ├── skills/
 │   ├── harness-protocol/SKILL.md        # .harness/ の約束事、2つの JSON Schema、handoff テンプレート、台帳
 │   ├── evaluation-lenses/SKILL.md       # 4つの観点、観点ごとの verdict ファイル、issue の再現
+│   ├── team-build/SKILL.md              # 分担表と、builder の teammate が従うルール
 │   ├── sprint-contract/SKILL.md         # 固定するインターフェースと、テスト可能な受け入れ基準
 │   └── qa-rubric/
 │       ├── SKILL.md                     # 6観点、アンカー、閾値、verdict.json のスキーマ
@@ -742,6 +792,7 @@ crystal-harness/
 │   ├── ledger.py                        # コスト台帳: SubagentStop hook、codex 分の追記、集計、予算ゲート
 │   ├── test_changes.py                  # ラウンドがテストに何をしたか: 削除、skip、コマンドの差し替え
 │   ├── merge_verdicts.py                # 観点ごとの verdict → 1つの verdict.json + qa.md。無理なら何も出さない
+│   ├── team_build.py                    # 分担表: 検査、有効化、builder ごとのコミット、後始末の検査、名前のゲート
 │   ├── validate_verdict.py              # verdict.json のスキーマ + モードごとに pass が意味してよいこと
 │   ├── validate_contract.py             # contract.md の基準数の上限、スコープの大きさ、ID の整合性
 │   ├── codex_review.py                  # codex プラグインを探し、diff をレビューし、codex-review.md を書く
@@ -751,7 +802,8 @@ crystal-harness/
 │   ├── test_codex_review.py
 │   ├── test_ledger.py
 │   ├── test_test_changes.py
-│   └── test_merge_verdicts.py
+│   ├── test_merge_verdicts.py
+│   └── test_team_build.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -770,13 +822,15 @@ python3 crystal-harness/scripts/test_codex_review.py
 python3 crystal-harness/scripts/test_ledger.py
 python3 crystal-harness/scripts/test_test_changes.py
 python3 crystal-harness/scripts/test_merge_verdicts.py
+python3 crystal-harness/scripts/test_team_build.py
 ```
 
 フレームワークも依存ライブラリも不要です。
 
-**担当範囲の guard に 66 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
+**担当範囲の guard に 95 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
 2つの拒否ポリシー、両エージェントを拒否する `codex-review.md` と `test-changes.json` の行、
-観点ごとのファイル、コスト台帳、
+観点ごとのファイル、コスト台帳、自分の担当パスに留められ作業ツリー全体に効く git コマンドを
+禁じられた builder、
 2つの抜け道(`..` によるディレクトリ遡りと `.harness/` 内に仕込んだシンボリックリンク)、大文字小文字の
 同一視、Bash の経路、正当な書き込みすべて、2つの fail-closed の経路。
 
@@ -803,14 +857,18 @@ skip、`.only`、`xfail`、テストコマンドの差し替えや削除、テ�
 観点の fail がラウンドを fail にすること、再現結果は issue に注記されるだけで issue を消さないこと。
 加えて、観点の欠落から別コミットを採点したファイルまで、統合そのものを拒否する20通りあまり。
 
-**コスト台帳に 71 ケース**: 最後の1リクエストではなく全リクエストを合計すること、hook の開始後に
+**チームビルドに 54 ケース**: 2体の担当パスが重なりうるすべての形、分担表で使えないパスの書き方、
+1体の builder のファイルだけを取り込み他の builder のファイルには触れないコミット、`check` が報告する
+残り物とその宛先、どのエージェントにどの名前を許すかを決めるゲート。
+
+**コスト台帳に 72 ケース**: 最後の1リクエストではなく全リクエストを合計すること、hook の開始後に
 transcript へ届いた最後の応答も数えること、ストリームで複数行に
 分かれた応答を1回だけ数えること、複数回停止したエージェントのスナップショットを加算せず置き換えること、
 hook がどんな不正な入力でも exit 0 で終わり、読めない transcript をゼロではなく `null` として記録
 すること、区分ごとの料金計算、0.10.0 より前の `state.json` のエントリをトークン合計に入れないこと、
 予算上限とそれを強制する hook。
 
-プロンプトではなくこの7つをテストしているのは、この7つが*気づかれないまま*壊れるからです。
+プロンプトではなくこの8つをテストしているのは、この8つが*気づかれないまま*壊れるからです。
 
 - contract の validator が拒否しなくなると、contract は再び上限を超えて膨らみ、run のすべての
   フェーズが遅く高くなる。
@@ -822,5 +880,7 @@ hook がどんな不正な入力でも exit 0 で終わり、読めない transc
   その表に基づいて下される。
 - テスト変更レポートが消されたテストに気づかなくなると、スイートは再び自分で自分を保証するようになる。
 - 統合が甘くなると、主張より少ししか測っていないラウンドが pass に見える。
+- 分担表の validator が重なったパスを受け入れるようになっても、ビルドは完了する。ただし、ある
+  builder の成果が別の builder の成果で置き換えられている。
 
 どれも目に見える症状が出ません。一方、プロンプトが劣化すれば、その出力は誰かが読むので気づけます。

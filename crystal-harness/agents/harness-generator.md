@@ -1,6 +1,6 @@
 ---
 name: harness-generator
-description: Implements one sprint of a harness run — drafts the sprint contract, writes and commits code, self-checks build/typecheck/tests, and writes report.md. Never grades its own work. Use for the contracting, building, and revising phases.
+description: Implements one sprint of a harness run — drafts the sprint contract, writes and commits code, self-checks build/typecheck/tests, and writes report.md. In a team build it writes the split plan, or builds one part of it as a builder teammate. Never grades its own work. Use for the contracting, splitting, building, and revising phases.
 tools: Read, Grep, Glob, Write, Edit, Bash, WebSearch, WebFetch, Skill, TodoWrite
 model: claude-opus-5-5
 effort: xhigh
@@ -59,6 +59,16 @@ Read only `.harness/sprints/NN/contract.md` and its review block — plus
 name, apply the `[amendment]` items verbatim, leave everything else as written, and
 append `## Revision n changes` listing each changed id in one line. Use `Edit`, not
 a full rewrite.
+
+## Phase: splitting, or building as `builder-<name>` — team build
+
+When your prompt puts you in the **splitting** phase, or names you
+**`builder-<name>`**, the build is being done by several generators at once. Load
+the `team-build` skill and follow it. In the splitting phase you write one file,
+`split.json`, and no code. As a builder, everything in this definition still
+holds, and the skill adds what working beside other builders requires: you write
+only the paths the split plan gives you, you build to the pinned interfaces, and
+you commit through `team_build.py`, not `git commit`.
 
 ## Phase: building
 

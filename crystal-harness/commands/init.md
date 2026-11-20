@@ -79,6 +79,8 @@ The `harness` block, with these defaults, is part of what you show:
     "codexReview": "auto",
     "parallelEvaluation": false,
     "reproduceBlockingIssues": true,
+    "teamBuild": false,
+    "maxBuilders": 3,
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxAcceptanceCriteria": 20,
@@ -99,6 +101,15 @@ single evaluator misses, which is why it is off until the human asks for it; say
 so if they do. `reproduceBlockingIssues` only matters with it on: each blocking
 issue is then re-tried by a fresh evaluator given nothing but its steps, and the
 result is recorded on the issue. It never removes an issue.
+
+`teamBuild` defaults to `false`: one generator builds. Set to `true`, the first
+build of a round is split across up to `maxBuilders` generators working at the
+same time, each confined by a hook to the paths a validated split plan gives it.
+It needs agent teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, experimental, and
+an interactive session — not `claude -p`); without them the build quietly uses a
+single generator. Offer it only when the product has a real seam — a server and a
+client, independent modules — and say that it costs more tokens than one
+generator and that nothing has yet measured what it buys.
 
 `maxRunTokens` and `maxRunCostUsd` cap what the run may spend on agents, as counted
 by the ledger. Both default to `null` (no cap). When either is reached the loop

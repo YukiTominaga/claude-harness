@@ -30,12 +30,17 @@ they decided, set `phase` back to the value implied by the current state, clear
 should normally be cleared only alongside a change the human made — say so if the
 working tree is unchanged since the block.
 
-## One builder at a time; evaluation may fan out
+## One builder at a time, unless a split plan says otherwise
 
 Each build, contract and revision step below spawns one agent and waits for it.
-Never fan those out: two generators on the same working tree collide. Current
-models delegate readily and will suggest parallel work — for building, the sequence
-here is the design, not a limitation to route around.
+Never fan those out on your own: two generators on the same working tree collide.
+Current models delegate readily and will suggest parallel work — the sequence here
+is the design, not a limitation to route around.
+
+The one exception is a **team build** (`harness.teamBuild: true`): the first build
+of a round may be done by several generators at once, under a split plan that a
+script validates and a hook enforces — see "Team build" below. Contract steps and
+revisions are never split.
 
 Evaluation is different, because evaluators do not write source. When
 `harness.parallelEvaluation` is `true`, a QA round is graded by one evaluator per
@@ -228,6 +233,92 @@ Each lens and each reproduction is a ledger entry of its own, so `ledger.py repo
 shows what this mode costs next to what it found. That comparison — against a run
 with `parallelEvaluation: false` — is the evidence for keeping it on.
 
+## Team build
+
+When `harness.teamBuild` is `true`, the **first build** of a round — step 3
+"Implement" of a sprint, or the single build of `useSprints: false` — is this
+procedure. Revisions after a failed QA round are not: those stay with one
+generator, because they work a short list of blocking issues.
+
+A team build needs agent teams, which are experimental and off by default, and an
+interactive session. Check first:
+
+```
+echo "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-0}"
+```
+
+If that does not print `1`, say one line — team build is configured but agent
+teams are not enabled, so this round builds with a single generator — journal it,
+and do the normal build step. Never treat that as an error.
+
+1. **Split.** Set `phase: "building"` (and `currentRound` as the build step says).
+   Spawn a fresh `harness-generator` **without a `name`**, in the **splitting**
+   phase, with `config.json`, `spec.md`, the contract if there is one, and the
+   round directory. It writes `<round dir>/split.json` and no code. The round
+   directory is `.harness/sprints/NN` in a sprint and `.harness/final/01` for the
+   single build of `useSprints: false`.
+2. **Validate**:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py" validate <round dir>/split.json
+   ```
+
+   Violations go back once to a fresh generator in the splitting phase with the
+   exact list. If the second plan is still invalid, or the plan has a single
+   builder, do the normal single-generator build instead and journal why. A plan
+   with one builder is a legitimate answer: it means the work has no seam.
+3. **Activate**: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py" activate <round dir>/split.json`.
+   This installs `.harness/split.json`, which is what the guard reads. From here
+   until step 7 no agent other than the builders may be running.
+4. **Spawn the builders.** For each builder in the plan, one Agent call with
+   `name: "builder-<name>"` and the `harness-generator` agent type — the name is
+   what makes it a teammate, and a hook refuses any other name for a generator.
+   Give each the same brief:
+   - it is `builder-<name>`, building in the round directory `<round dir>`;
+   - its `scope` and `owns`, verbatim from the plan;
+   - every pinned interface, verbatim;
+   - the other builders' names and scopes, so it knows whom to ask;
+   - the commit command with the script's real path:
+     `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py" commit --builder <name> -m "…"`;
+   - that it follows the `team-build` skill's "Building as `builder-<name>`".
+
+   Give no builder a summary of another's progress, and do not build anything
+   yourself while they work.
+5. **Wait until every builder has reported done.** Builders message each other
+   about interfaces; that is the point of a team. Step in only if one asks you to
+   settle a disagreement about a pinned interface — decide, tell every builder it
+   touches, and journal the decision.
+6. **Check what they left**:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py" check
+   ```
+
+   Exit 0: clean. Exit 2: each printed line names the builder who can fix it —
+   send that builder its lines verbatim, wait, and check again. After **two**
+   rounds of that, stop sending: journal what is still outstanding and go on; the
+   evaluator will grade what exists. Lines addressed to `nobody` are a path with
+   no owner — ask the builder whose paths are nearest to remove or claim it.
+7. **Stand the team down.** Ask each builder to shut down and wait until all have.
+   Then, in this order:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py" report
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py" deactivate
+   ```
+
+   `report` joins the builders' own reports into `<round dir>/report.md`, which is
+   what the evaluator reads. Do not write or edit that file yourself.
+8. Run the project's `commands.build` and `commands.test` once and note the
+   literal outcome in the journal — the builders tested their own parts, and this
+   is the first time the whole has been run. Then continue with the round as
+   usual (codex review, test changes, context reset, evaluation). A red build or
+   suite here goes to the evaluator like any other state of the tree; do not send
+   the builders back in.
+
+Builders are teammates, so they are not reused: a later round's build, if it is a
+team build, starts from a new split plan and new builders.
+
 ## Mode selection
 
 Read `harness.useSprints`.
@@ -235,7 +326,9 @@ Read `harness.useSprints`.
 - `true` → the sprint loop, then the final assessment.
 - `false` → **v2 mode**: skip contracting and sprints entirely. Planner output goes
   straight to one `harness-generator` that builds the whole thing in a single
-  coherent session, committing continuously. Then run the final assessment loop
+  coherent session, committing continuously — or, when `harness.teamBuild` is
+  `true`, to a team build ("Team build" above), whose `report.md` lands in
+  `.harness/final/01/`. Then run the final assessment loop
   below. Build round 2 revises against round 1's blocking issues, and so on. For
   the single build set `phase: "building"` with `currentSprint: null` and
   `currentRound: null` before spawning — it precedes the first round. This
@@ -298,7 +391,10 @@ set the sprint's `contractRounds`.
 
 ### 3. Implement
 
-Set `phase: "building"` and `currentRound: 1`. Spawn a **fresh `harness-generator`**
+Set `phase: "building"` and `currentRound: 1`. If `harness.teamBuild` is `true`, run
+"Team build" above for this sprint — the contract's pinned interfaces are the
+starting point for the split plan's — and continue from the next step. Otherwise
+spawn a **fresh `harness-generator`**
 with the accepted contract. It implements, commits, self-checks its own build/typecheck/tests, and
 writes `report.md`.
 

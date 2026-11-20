@@ -34,6 +34,17 @@
             "statusMessage": "Checking the harness budget"
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py\" gate",
+            "timeout": 15,
+            "statusMessage": "Checking who may be named what"
+          }
+        ]
       }
     ],
     "SubagentStop": [
