@@ -124,13 +124,25 @@ token counts into an estimated-USD column, which is what makes "is the evaluator
 worth its cost on this project" answerable with a number. Left `null`, the ledger
 still records tokens and wall time.
 
+Prefer the per-category form, in USD per million tokens, with the prices the human
+gives you for the model the agents run on — never fill them in from memory:
+
+```json
+"costPerMTokUsd": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0 }
+```
+
+The ledger counts every request an agent made, and in a long session most of those
+tokens are cache reads, which are priced far below fresh input. A single number is
+still accepted and is applied to every token alike, which overstates a
+cache-heavy run badly; say so if the human chooses it.
+
 ## 3. Write the run state
 
 After confirmation, create:
 
 - `.harness/config.json` — as confirmed.
-- `.harness/state.json` — `schemaVersion: 2`, `phase: "init"`, `currentSprint: null`,
-  `sprints: []`, `finalRounds: []`, `repeatedIssueFingerprints: {}`, `ledger: []`,
+- `.harness/state.json` — `schemaVersion: 3`, `phase: "init"`, `currentSprint: null`,
+  `currentRound: null`, `sprints: []`, `finalRounds: []`, `repeatedIssueFingerprints: {}`,
   `lastGoodCommit` set to `git rev-parse HEAD` if the repo has a commit, else `null`.
 - `.harness/journal.md` — one entry recording initialization and what was detected.
 - `.harness/handoff.md` — using the template in `harness-protocol`, with

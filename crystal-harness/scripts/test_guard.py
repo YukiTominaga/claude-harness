@@ -52,7 +52,25 @@ def bash(agent, command, cwd):
 
 def cases(root):
     gen, ev = "harness-generator", "harness-evaluator"
+    # What Claude Code actually puts in `agent_type` for an installed plugin's
+    # agent: the plugin-namespaced name. Every case below that uses the bare
+    # name passed while the guard was a no-op in real runs, because the guard
+    # compared the raw value against the bare names — so the namespaced form
+    # is tested first and separately.
+    ns_gen, ns_ev = "crystal-harness:harness-generator", "crystal-harness:harness-evaluator"
     return [
+        ("namespaced gen -> final verdict.json", write(ns_gen, ".harness/final/01/verdict.json", root), DENY),
+        ("namespaced gen -> state.json", write(ns_gen, ".harness/state.json", root), DENY),
+        ("namespaced gen -> bash into verdict", bash(ns_gen, "echo x > .harness/final/01/verdict.json", root), DENY),
+        ("namespaced gen -> application source", write(ns_gen, "src/App.tsx", root), ALLOW),
+        ("namespaced eval -> application source", write(ns_ev, "src/App.tsx", root), DENY),
+        ("namespaced eval -> final report.md", write(ns_ev, ".harness/final/01/report.md", root), DENY),
+        ("namespaced eval -> final verdict.json", write(ns_ev, ".harness/final/01/verdict.json", root), ALLOW),
+        # The planner has no row in the ownership table, namespaced or not.
+        ("namespaced planner -> spec.md", write("crystal-harness:harness-planner", ".harness/spec.md", root), ALLOW),
+        # A name that merely contains a role is not that role.
+        ("lookalike agent -> verdict.json", write("not-harness-generator", ".harness/final/01/verdict.json", root), ALLOW),
+        ("non-string agent_type -> verdict.json", write(7, ".harness/final/01/verdict.json", root), ALLOW),
         # The generator may not author a verdict, in either directory tree.
         ("gen -> sprints verdict.json", write(gen, ".harness/sprints/01/verdict.json", root), DENY),
         ("gen -> sprints qa.md (absolute)", write(gen, f"{root}/.harness/sprints/02/qa.md", root), DENY),
@@ -68,6 +86,10 @@ def cases(root):
         ("gen -> journal.md", write(gen, ".harness/journal.md", root), DENY),
         ("gen -> spec.md", write(gen, ".harness/spec.md", root), DENY),
         ("gen -> config.json", write(gen, ".harness/config.json", root), DENY),
+        # The cost ledger is written by a hook from transcripts. An agent that
+        # can edit it can make itself look cheap.
+        ("gen -> ledger.jsonl", write(gen, ".harness/ledger.jsonl", root), DENY),
+        ("gen -> bash appending to ledger", bash(gen, "echo '{}' >> .harness/ledger.jsonl", root), DENY),
         # Shell is the obvious way around a path check, for the one agent with no
         # legitimate reason to name a verdict artifact at all.
         ("gen -> bash redirect into verdict", bash(gen, "echo x > .harness/sprints/01/verdict.json", root), DENY),
@@ -93,6 +115,7 @@ def cases(root):
         ("eval -> state.json", write(ev, ".harness/state.json", root), DENY),
         ("eval -> handoff.md", write(ev, ".harness/handoff.md", root), DENY),
         ("eval -> spec.md", write(ev, ".harness/spec.md", root), DENY),
+        ("eval -> ledger.jsonl", write(ev, ".harness/ledger.jsonl", root), DENY),
         ("eval -> sprints report.md", write(ev, ".harness/sprints/01/report.md", root), DENY),
         ("eval -> final report.md", write(ev, ".harness/final/01/report.md", root), DENY),
         ("eval -> stray note in .harness", write(ev, ".harness/notes.md", root), DENY),

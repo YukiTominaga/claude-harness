@@ -39,23 +39,25 @@ work — the sequence here is the design, not a limitation to route around. The 
 concurrency in this harness is that a subagent may use its own tools in parallel
 internally.
 
-## Record the ledger after every subagent call
+## The ledger records itself — keep `state.json` ahead of it
 
-The Agent tool's result reports `duration_ms` and `subagent_tokens`. After **every**
-call, append an entry to `state.json`'s `ledger` by running the plugin's helper —
-never by rewriting `state.json` by hand, which risks a malformed file and a wrong
-timestamp on every phase:
+You do not append ledger entries for agents. A `SubagentStop` hook sums each
+agent's token usage from its transcript and appends to `.harness/ledger.jsonl`
+when the agent finishes (see `harness-protocol`). Two things are still yours:
 
-```
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/append_ledger.py" \
-  --agent harness-evaluator --phase qa --sprint 3 --round 1 \
-  --duration-ms <duration_ms> --tokens <subagent_tokens>
-```
+- **Set `phase`, `currentSprint` and `currentRound` in `state.json` before you
+  spawn an agent, never after it returns.** The hook stamps the entry with whatever
+  `state.json` says at the moment the agent stops. An entry stamped with the
+  previous phase is attributed to the wrong round for good.
+- **Never copy `subagent_tokens` from an Agent tool result** into the journal, a
+  report block, or anything else. It is the size of the agent's final request, not
+  its run. When you need a round's cost, run
 
-Omit any numeric flag whose value the Agent result did not report — the script
-records `null`; never estimate. It stamps `ts` and `updatedAt` itself and writes
-atomically. Other `state.json` changes (phase, sprint statuses, verdict summaries)
-are still yours to edit directly.
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" report
+  ```
+
+  and quote its numbers.
 
 This is not bookkeeping. The recurring judgement this harness exists to support is
 *is this component still worth its cost*, and the ledger is the only place that
@@ -99,9 +101,15 @@ unavailable codex into exit 1 for a human who wants to know it did not run.
 
 This step is skipped entirely when `harness.codexReview` is `false`.
 
-Append a ledger entry for it like any other component — `--agent codex-review`,
-with `--duration-ms` measured and no `--tokens`, because the cost is not reported
-back to you. The point of the ledger is to make "is this component still worth its
+It is the one component you record by hand, because it is not an agent and fires
+no hook — measure its wall time and run
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" append --agent codex-review --duration-ms <ms>
+```
+
+It carries no token count, because that cost is not reported back to you. The
+point of the ledger is to make "is this component still worth its
 cost" answerable, and a component exempt from it is a component nobody can strip.
 
 Do not read `codex-review.md` yourself, do not summarise it to the evaluator, and
@@ -117,7 +125,9 @@ Read `harness.useSprints`.
 - `false` → **v2 mode**: skip contracting and sprints entirely. Planner output goes
   straight to one `harness-generator` that builds the whole thing in a single
   coherent session, committing continuously. Then run the final assessment loop
-  below. Build round 2 revises against round 1's blocking issues, and so on. This
+  below. Build round 2 revises against round 1's blocking issues, and so on. For
+  the single build set `phase: "building"` with `currentSprint: null` and
+  `currentRound: null` before spawning — it precedes the first round. This
   mode exists because the sprint construct is the first thing to become unnecessary
   as models sustain longer coherent sessions — with a capable enough model the
   decomposition buys nothing and costs a contract negotiation per sprint.
@@ -134,7 +144,8 @@ ordering is **not** the end of the run.
 
 ### 1. Contract
 
-Set `phase: "contracting"`. Spawn a **fresh `harness-generator`** with the sprint
+Set `phase: "contracting"`, `currentSprint` to this sprint and `currentRound: null`.
+Spawn a **fresh `harness-generator`** with the sprint
 index and the paths to `config.json`, `spec.md`, and the previous sprint's
 `verdict.json` (its non-blocking issues are the ones a new sprint may pick up;
 older verdicts are already summarised in `state.json`). It writes
@@ -176,8 +187,8 @@ set the sprint's `contractRounds`.
 
 ### 3. Implement
 
-Set `phase: "building"`. Spawn a **fresh `harness-generator`** with the accepted
-contract. It implements, commits, self-checks its own build/typecheck/tests, and
+Set `phase: "building"` and `currentRound: 1`. Spawn a **fresh `harness-generator`**
+with the accepted contract. It implements, commits, self-checks its own build/typecheck/tests, and
 writes `report.md`.
 
 If it reports a failing build or failing tests it could not fix, do not proceed to
@@ -250,7 +261,8 @@ both the mixed-mode warning and the stopping rule below have nothing to read.
 clear `repeatedIssueFingerprints`, write the handoff, journal it, and move to the
 next sprint.
 
-**Fail** — set `phase: "revising"`, increment the sprint's `revisions`. For each
+**Fail** — set `phase: "revising"`, increment the sprint's `revisions`, and set
+`currentRound` to `revisions + 1`. For each
 blocking issue id, increment `repeatedIssueFingerprints[id]`; drop ids that did not
 recur.
 
@@ -298,7 +310,8 @@ in v2 mode immediately after the single build.
 
 For round `NN` starting at 01:
 
-1. Set `phase: "final-qa"`. Write the handoff and journal the transition.
+1. Set `phase: "final-qa"` and `currentRound` to `NN`. Write the handoff and journal
+   the transition.
 2. Run the codex review step against this round's diff, writing
    `.harness/final/NN/codex-review.md`. On round 01 in v2 mode the base is the
    commit the single build started from; on later rounds it is the previous
@@ -313,7 +326,8 @@ For round `NN` starting at 01:
 4. Validate the verdict with `validate_verdict.py` as in the sprint loop; append to
    `finalRounds`, copying `verificationMode` into the summary as above.
 5. **Pass** → commit, set `phase: "done"`, write the final handoff, and report.
-   **Fail** → set `phase: "final-building"`, spawn a fresh generator against the
+   **Fail** → set `phase: "final-building"` (leave `currentRound` at `NN` — the fix
+   is written into this round's directory), spawn a fresh generator against the
    blocking issues only, which writes `.harness/final/NN/report.md`; then increment
    the round and return to step 1.
 6. Stop and ask the human when rounds would exceed `harness.maxFinalQaRounds`, or
@@ -322,15 +336,16 @@ For round `NN` starting at 01:
 ## Between phases
 
 After every sprint and every final round, regardless of outcome: `state.json`
-updated, `ledger` appended, `handoff.md` rewritten, journal appended, artifacts
-committed. A run that crashes must be resumable from those files alone.
+updated, `handoff.md` rewritten, journal appended, artifacts committed —
+`.harness/ledger.jsonl` among them, since the hook has been appending to it. A run that crashes must be resumable from those files alone.
 
 ## Report as you go
 
 After each sprint and each final round print a short block: the number, verdict,
 verification mode, six scores with the previous round's for comparison (waived ones
 shown as waived, not as a number), blocking issue count, whether a codex review ran,
-tokens and duration for that round, and what comes next. Do not editorialize about
+tokens and duration for that round as `ledger.py report` gives them, and what comes
+next. Do not editorialize about
 progress.
 
 Say the mode every time. A reader scanning a run of passes needs to see at a glance

@@ -56,7 +56,7 @@ claude
 claude --plugin-dir /absolute/path/to/claude-harness/crystal-harness
 ```
 
-インストールできたか確認します。インベントリに agent 3つ、MCP サーバー 1つ、hook 1つ、skill 9つ
+インストールできたか確認します。インベントリに agent 3つ、MCP サーバー 1つ、hook 3つ、skill 9つ
 が表示されれば正常です(6つのコマンドが、3つのリファレンス skill と合わせて skill として数えられます)。
 
 ```bash
@@ -124,7 +124,8 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 .harness/
 ├── config.json          # ハーネスの設定
 ├── spec.md              # planner の出力: プロダクト仕様
-├── state.json           # run の状態 + コスト台帳(ledger)
+├── state.json           # run の状態
+├── ledger.jsonl         # コスト台帳。hook がエージェントの transcript から追記する
 ├── handoff.md           # コンテキストリセット用の引き継ぎファイル(毎回書き直す)
 ├── journal.md           # 追記のみの、人間向けログ
 ├── artifacts/           # Playwright の作業出力。browser モードのみ(gitignore 対象)
@@ -163,16 +164,37 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 
 ### コスト台帳
 
-`state.json` には追記専用の `ledger` があります。サブエージェントを呼ぶたびに1エントリ追加され、
-エージェント、フェーズ、所要時間、Agent ツールが報告したトークン数が記録されます。
+`.harness/ledger.jsonl` は、各エージェントにかかったコストを記録する追記専用のファイルです。
+エージェント、フェーズ、スプリント、ラウンド、所要時間のほか、トークン数を input・cache write・
+cache read・output の4区分で持ちます。
+
+これを書くのはモデルではありません。エージェント(サブエージェント、workflow のエージェント、
+agent team の teammate)が終わるたびに `SubagentStop` hook が `scripts/ledger.py` を実行し、
+**そのエージェントの transcript にある全 API リクエスト**の usage を合計します。
+
+以前は Agent ツールが返す `subagent_tokens` を記録していましたが、意図的にやめました。この値は
+エージェントの実行全体ではなく、*最後の1リクエスト*の大きさだと分かったからです。Claude Code
+2.1.329 での実測では、3リクエストで 64,685 トークンを処理したエージェントが 21,689 と報告しました。
+長時間の generator セッションでは差が桁違いになり、以前の台帳はどの run もその分だけ過小に
+記録していました。
+
+hook は少しだけ待つ必要もあります。Claude Code がエージェントの最後の応答を transcript に書くのは、
+`SubagentStop` の発火から約 100 ミリ秒後です。そのため hook は、1リクエスト足りない transcript を
+合計してしまわないよう、最後のメッセージが現れるまで待ってから集計します。
 
 これがあるのは、この設計で繰り返し必要になる最も重要な判断が「*この部品はまだコストに見合っているか*」
-であり、それは文章からは答えられないからです。`/crystal-harness:status` は台帳をエージェント別の表に
-集計し、run 全体に占める evaluator の割合を示します。`harness.costPerMTokUsd` を設定すれば、
-推定ドル額に換算されます。
+であり、それは文章からは答えられないからです。`/crystal-harness:status` は `ledger.py report` の出力
+(エージェント別とラウンド別の表、run 全体に占める evaluator の割合)をそのまま表示します。
+`harness.costPerMTokUsd` を設定すれば推定ドル額も出ます。料金は4区分それぞれで指定します。長い
+セッションのトークンの大半は cache read で、新規の input よりはるかに安いからです。
 
 台帳がなければ、後述の「何を外すか」の節はただの意見です。台帳があれば、「evaluator は直近
 4スプリントで何も見つけておらず、run のコストの 38% を占めた」は事実になります。
+
+台帳に含まれないものが2つあります。オーケストレーターのセッション自身の使用量と、codex レビューの
+トークンです(所要時間は記録しますが、コストはこちらに報告されません)。transcript を読めなかった
+場合は `tokens: null` で記録し、レポートが該当する呼び出しの件数を表示します。欠けた値を推定で
+埋めることはありません。
 
 ### 担当範囲の強制
 
@@ -187,11 +209,23 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
   generator が書けるなら自分でセカンドオピニオンをでっち上げられるし、evaluator が書けるなら
   自分がこれから引用する証拠を編集できてしまう。
 
-それ以外はすべて素通しします。ログ用やフォーマット用の hook はありません。どちらも特定の失敗を
-防がないからです。何も防がない足場こそ、この設計全体が避けようとしているオーバーヘッドです。
+同じ hook が、オーケストレーターのファイル(`state.json`、`handoff.md`、`journal.md`、
+`config.json`、`spec.md`)と `ledger.jsonl` への両者の書き込みも止めます。台帳を編集できる
+エージェントは、自分を安く見せられるからです。
+
+それ以外はすべて素通しします。フォーマット用の hook も、汎用のログ用 hook もありません。どちらも
+特定の失敗を防がないからです。何も防がない足場こそ、この設計全体が避けようとしているオーバーヘッドです。
+残り2つの hook は、それぞれ1つの失敗に対応しています。`SessionStart` は、ここに run がすでにある
+ことを知らせます。`SubagentStop` は上のコスト台帳を記録します。モデルが覚えていて書くはずの
+エントリは、いずれ書かれなくなるからです。
 
 境界での振る舞いとその理由:
 
+- **エージェントは `agent_type` の最後の区切りで見分ける。** Claude Code は、プラグインの
+  エージェントを素の名前ではなく `crystal-harness:harness-generator` という形で hook に渡す。
+  0.10.0 より前の guard は、届いた値をそのまま素の名前と比較していたため何にも一致せず、すべての
+  書き込みを許可していた。インストールされたすべてのコピーで起きていたが、症状は何も出ず、素の名前を
+  使っていた guard 自身のテストも通っていた。現在のテストは、名前空間付きの形を最初に確認する。
 - **fail closed(失敗時は拒否)にしている。** イベントを解析できない場合や `python3` がない場合、
   guard は exit 2 で終了し、説明付きで呼び出しをブロックする。検査できなかったものを通してしまう
   guard は、guard がないより悪い。
@@ -239,7 +273,8 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
     "maxRevisionsPerSprint": 5,
     "maxAcceptanceCriteria": 20,      // スプリント contract あたりの上限。validate_contract.py が強制
     "maxFinalQaRounds": 5,
-    "costPerMTokUsd": null            // 設定すると /crystal-harness:status に推定ドル額が出る
+    "costPerMTokUsd": null            // {input, output, cacheWrite, cacheRead} を USD/MTok で指定
+                                      // → /crystal-harness:status に推定ドル額が出る
   }
 }
 ```
@@ -603,14 +638,15 @@ crystal-harness/
 ├── scripts/
 │   ├── guard_harness_artifacts.py       # PreToolUse hook が実行する担当範囲のポリシー
 │   ├── inject_harness_context.py        # ここに run があるとき SessionStart で通知する
-│   ├── append_ledger.py                 # 台帳に1エントリを、タイムスタンプ付きでアトミックに書く
+│   ├── ledger.py                        # コスト台帳: SubagentStop hook、codex 分の追記、集計
 │   ├── validate_verdict.py              # verdict.json のスキーマ + モードごとに pass が意味してよいこと
 │   ├── validate_contract.py             # contract.md の基準数の上限、スコープの大きさ、ID の整合性
 │   ├── codex_review.py                  # codex プラグインを探し、diff をレビューし、codex-review.md を書く
 │   ├── test_guard.py
 │   ├── test_validate_verdict.py
 │   ├── test_validate_contract.py
-│   └── test_codex_review.py
+│   ├── test_codex_review.py
+│   └── test_ledger.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -626,11 +662,13 @@ python3 crystal-harness/scripts/test_guard.py
 python3 crystal-harness/scripts/test_validate_verdict.py
 python3 crystal-harness/scripts/test_validate_contract.py
 python3 crystal-harness/scripts/test_codex_review.py
+python3 crystal-harness/scripts/test_ledger.py
 ```
 
 フレームワークも依存ライブラリも不要です。
 
-**担当範囲の guard に 43 ケース**: 2つの拒否ポリシー、両エージェントを拒否する `codex-review.md` の行、
+**担当範囲の guard に 56 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
+2つの拒否ポリシー、両エージェントを拒否する `codex-review.md` の行、コスト台帳、
 2つの抜け道(`..` によるディレクトリ遡りと `.harness/` 内に仕込んだシンボリックリンク)、大文字小文字の
 同一視、Bash の経路、正当な書き込みすべて、2つの fail-closed の経路。
 
@@ -648,7 +686,13 @@ exit code の約束事を両方向から確認する。
 超過・未満、セクションの欠落や空、ID の重複、スコープ 3〜7 の範囲、コードフェンス内の例を数えないこと、
 contract に存在しない ID を参照する amendment や修正メモ。
 
-プロンプトではなくこの4つをテストしているのは、この4つが*気づかれないまま*壊れるからです。
+**コスト台帳に 54 ケース**: 最後の1リクエストではなく全リクエストを合計すること、hook の開始後に
+transcript へ届いた最後の応答も数えること、ストリームで複数行に
+分かれた応答を1回だけ数えること、複数回停止したエージェントのスナップショットを加算せず置き換えること、
+hook がどんな不正な入力でも exit 0 で終わり、読めない transcript をゼロではなく `null` として記録
+すること、区分ごとの料金計算、0.10.0 より前の `state.json` のエントリをトークン合計に入れないこと。
+
+プロンプトではなくこの5つをテストしているのは、この5つが*気づかれないまま*壊れるからです。
 
 - contract の validator が拒否しなくなると、contract は再び上限を超えて膨らみ、run のすべての
   フェーズが遅く高くなる。
@@ -656,5 +700,7 @@ contract に存在しない ID を参照する amendment や修正メモ。
 - verdict の validator が拒否しなくなると、何も測っていないラウンドが pass に見える。
 - レビューの補助スクリプトが exit code で嘘をつくと、受けていないセカンドオピニオンや、別の diff に
   ついてのセカンドオピニオンをラウンドが記録してしまう。
+- 台帳が記録をやめたり二重に数えたりしても、表はもっともらしく見え、「何を外すか」の判断がすべて
+  その表に基づいて下される。
 
 どれも目に見える症状が出ません。一方、プロンプトが劣化すれば、その出力は誰かが読むので気づけます。

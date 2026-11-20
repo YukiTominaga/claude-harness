@@ -46,7 +46,7 @@ flowchart TB
     subgraph det["決定的なコード — モデルも判断もなし"]
         vc["validate_contract.py"]
         vv["validate_verdict.py"]
-        led["append_ledger.py"]
+        led["ledger.py<br/>(SubagentStop hook)"]
         guard["guard_harness_artifacts.py<br/>(PreToolUse hook)"]
         inject["inject_harness_context.py<br/>(SessionStart hook)"]
     end
@@ -58,10 +58,11 @@ flowchart TB
 
     human -- "config と spec を承認、<br/>ブロックを解除" --> orch
     orch -- 起動 --> planner & gen & evalr
-    orch -- 実行 --> vc & vv & led
+    orch -- 実行 --> vc & vv
     orch -- "codex_review.py を実行" --> codex
     evalr -- "UI を操作<br/>(browserVerification: true)" --> pw
     guard -. "各エージェントの担当外への<br/>書き込みをブロック" .-> gen & evalr
+    led -. "各エージェントの transcript を集計し<br/>ledger.jsonl に記録" .-> planner & gen & evalr
 ```
 
 | 役割 | 動くモデル | ツール | 書くもの | 絶対にしないこと |

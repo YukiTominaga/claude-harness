@@ -46,7 +46,7 @@ flowchart TB
     subgraph det["Deterministic code — no model, no judgement"]
         vc["validate_contract.py"]
         vv["validate_verdict.py"]
-        led["append_ledger.py"]
+        led["ledger.py<br/>(SubagentStop hook)"]
         guard["guard_harness_artifacts.py<br/>(PreToolUse hook)"]
         inject["inject_harness_context.py<br/>(SessionStart hook)"]
     end
@@ -58,10 +58,11 @@ flowchart TB
 
     human -- "approves config, spec;<br/>clears blocks" --> orch
     orch -- spawns --> planner & gen & evalr
-    orch -- runs --> vc & vv & led
+    orch -- runs --> vc & vv
     orch -- "runs codex_review.py" --> codex
     evalr -- "drives the UI<br/>(browserVerification: true)" --> pw
     guard -. "blocks writes outside<br/>each agent's lane" .-> gen & evalr
+    led -. "sums each agent's transcript<br/>into ledger.jsonl" .-> planner & gen & evalr
 ```
 
 | Role | Runs on | Tools | Writes | Never |
