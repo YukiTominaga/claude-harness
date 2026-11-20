@@ -21,12 +21,11 @@ Target, from `$1`:
    sprint's `contract.md`.
    - No contract for that sprint? Say so and grade against the spec instead, deriving
      `SPEC-n` criteria. State clearly that criteria were derived, not agreed.
-2. Before spawning, set `state.json`'s `phase` (`qa` or `final-qa`) and
-   `currentRound` — for sprint QA the sprint's `revisions + 1`, for a final
-   assessment the `NN` of the round directory being written — and write
-   `.harness/handoff.md`. Even a standalone QA is a phase boundary: the handoff is
-   what makes an interrupted run resumable, and the ledger hook stamps the
-   evaluator's cost with whatever `state.json` says when it finishes.
+2. Write `.harness/handoff.md` before spawning. Even a standalone QA is a phase
+   boundary; the handoff is what makes an interrupted run resumable. Leave
+   `phase` and `currentRound` in `state.json` alone (see below) — the ledger hook
+   stamps this evaluator's cost with whatever they hold, which files a standalone
+   QA under the round the run is already in.
 3. Spawn a **fresh `harness-evaluator`** with the file paths and the target
    directory. Give it no summary of what the code does. It reads
    `harness.browserVerification` itself and picks its verification mode from it —
