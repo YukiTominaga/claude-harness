@@ -19,8 +19,13 @@ evaluator to have reviewed that report, and — when the report says the suite w
 weakened — rejects any pass that was carried from an earlier round on the
 strength of the suite. A test the generator deleted cannot vouch for anything.
 
+And given `--rules <report>` (the output of `rules.py match`), it requires the
+verdict to account for every project rule the round's diff triggered. A rule the
+evaluator was handed and did not report on is a check that did not happen.
+
 Usage:
     python3 validate_verdict.py .harness/sprints/03/verdict.json
+    python3 validate_verdict.py .harness/final/02/verdict.json --rules .harness/final/02/rules-to-check.json
     python3 validate_verdict.py .harness/final/02/verdict.json \
         --test-changes .harness/final/02/test-changes.json
 
@@ -54,13 +59,13 @@ TOP_ALLOWED = set(TOP_REQUIRED) | {"$schema", "sprint"}
 CRITERION_REQUIRED = ("id", "text", "result")
 CRITERION_ALLOWED = set(CRITERION_REQUIRED) | {"evidence", "browserOnly", "screenshot"}
 ISSUE_REQUIRED = ("id", "summary", "repro", "observed", "expected", "cause")
-ISSUE_ALLOWED = set(ISSUE_REQUIRED) | {"criterionId", "dimension", "screenshot", "verification"}
+ISSUE_ALLOWED = set(ISSUE_REQUIRED) | {"criterionId", "dimension", "screenshot", "verification", "preExisting"}
 VERIFICATION_VALUES = ("reproduced", "not_reproduced", None)
 CAUSE_ALLOWED = {"file", "line", "mechanism"}
 ENV_REQUIRED = ("verificationMode", "playwrightAvailable", "degraded")
 ENV_ALLOWED = set(ENV_REQUIRED) | {
     "degradedReason", "appUrl", "apiUrl", "apiVerified", "persistenceVerified",
-    "testsVerified", "codexReview", "testChanges", "lenses",
+    "testsVerified", "codexReview", "testChanges", "lenses", "rulesChecked",
 }
 TEST_CHANGES_VALUES = ("none", "reviewed", "absent", None)
 CARRIED_PREFIX = "carried from round"
@@ -107,6 +112,8 @@ def check_issue(issue, path):
         err(f"{path}.dimension", f"must be one of {SCORE_KEYS} or null")
     check_str_or_null(issue, "criterionId", path)
     check_str_or_null(issue, "screenshot", path)
+    if "preExisting" in issue and not isinstance(issue["preExisting"], bool):
+        err(f"{path}.preExisting", "must be a boolean")
     if "verification" in issue and issue["verification"] not in VERIFICATION_VALUES:
         err(f"{path}.verification", 'must be "reproduced", "not_reproduced" or null')
     cause = issue.get("cause")
@@ -267,18 +274,56 @@ def check_test_changes(env, criteria, report_path):
         )
 
 
+def check_rules(env, report_path):
+    """Every project rule this round's diff triggered must be accounted for."""
+    try:
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        expected = [rule["id"] for rule in report["rules"]]
+        if any(not isinstance(rule_id, str) for rule_id in expected):
+            raise ValueError("a rule id is not a string")
+    except Exception as exc:  # noqa: BLE001
+        err("--rules", f"could not read {report_path} as a rules-to-check report: {exc}")
+        return
+    checked = env.get("rulesChecked") if isinstance(env, dict) else None
+    checked = checked if isinstance(checked, list) else []
+    missing = [rule_id for rule_id in expected if rule_id not in checked]
+    if missing:
+        err(
+            "$.environment.rulesChecked",
+            f"is missing {', '.join(missing)} — this round's diff triggered "
+            f"{'that rule' if len(missing) == 1 else 'those rules'}, and each has to be checked and listed",
+        )
+    extra = [rule_id for rule_id in checked if rule_id not in expected]
+    if extra:
+        err(
+            "$.environment.rulesChecked",
+            f"lists {', '.join(str(x) for x in extra)}, which this round's diff did not trigger — "
+            "list only the rules in rules-to-check.json",
+        )
+
+
+USAGE = "usage: validate_verdict.py <verdict.json> [--test-changes <report.json>] [--rules <report.json>]"
+
+
+def take_option(args, name):
+    """Pop `name <value>` out of args; returns (value or None, ok)."""
+    if name not in args:
+        return None, True
+    at = args.index(name)
+    if at + 1 >= len(args):
+        return None, False
+    value = args[at + 1]
+    del args[at:at + 2]
+    return value, True
+
+
 def main():
     args = sys.argv[1:]
-    test_changes = None
-    if "--test-changes" in args:
-        at = args.index("--test-changes")
-        if at + 1 >= len(args):
-            print("usage: validate_verdict.py <verdict.json> [--test-changes <report.json>]", file=sys.stderr)
-            return 1
-        test_changes = args[at + 1]
-        del args[at:at + 2]
-    if len(args) != 1:
-        print("usage: validate_verdict.py <verdict.json> [--test-changes <report.json>]", file=sys.stderr)
+    test_changes, ok_a = take_option(args, "--test-changes")
+    rules_report, ok_b = take_option(args, "--rules")
+    if not (ok_a and ok_b) or len(args) != 1:
+        print(USAGE, file=sys.stderr)
         return 1
     verdict_path = args[0]
 
@@ -378,10 +423,11 @@ def main():
                 err("$.environment.codexReview", 'must be "confirmed", "present", "absent" or null')
             if "testChanges" in env and env["testChanges"] not in TEST_CHANGES_VALUES:
                 err("$.environment.testChanges", 'must be "none", "reviewed", "absent" or null')
-            if "lenses" in env and (
-                not isinstance(env["lenses"], list) or any(not isinstance(x, str) for x in env["lenses"])
-            ):
-                err("$.environment.lenses", "must be an array of strings")
+            for key in ("lenses", "rulesChecked"):
+                if key in env and (
+                    not isinstance(env[key], list) or any(not isinstance(x, str) for x in env[key])
+                ):
+                    err(f"$.environment.{key}", "must be an array of strings")
             if "verificationMode" in env:
                 if env["verificationMode"] not in MODES:
                     err("$.environment.verificationMode", f"must be one of {MODES}")
@@ -391,6 +437,8 @@ def main():
     check_mode_consistency(verdict, env, mode, criteria)
     if test_changes is not None:
         check_test_changes(env, criteria, test_changes)
+    if rules_report is not None:
+        check_rules(env, rules_report)
 
     if errors:
         for message in errors:

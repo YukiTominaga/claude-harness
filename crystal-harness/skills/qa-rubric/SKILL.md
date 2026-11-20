@@ -278,6 +278,13 @@ threshold that applies in this mode; a console error thrown during a graded flow
 write that does not persist; data loss; a navigation dead-end. Blocking issues are
 the *only* thing the generator revises against.
 
+A defect that was already there when the run started is judged by the same test.
+If it makes a criterion or an applicable threshold fail, it is blocking, and it
+carries `preExisting: true` so nobody mistakes it for a regression. If nothing the
+contract or the spec promised depends on it, it is non-blocking with the same
+mark. In a final assessment the spec is the promise, so an inherited defect in
+anything the spec describes blocks.
+
 **Non-blocking** — real but not gating: cosmetic misalignment, a nice-to-have state,
 a slow-but-working path. Record them; they are inputs to a later sprint.
 
@@ -403,7 +410,8 @@ JSON Schema (draft 2020-12):
         "testsVerified": { "type": "boolean", "description": "true if the project's own test suite was executed by the evaluator and passed" },
         "codexReview": { "enum": ["confirmed", "present", "absent", null], "description": "confirmed once its findings were checked against the code; present if the file exists but was not usable; absent otherwise" },
         "testChanges": { "enum": ["none", "reviewed", "absent", null], "description": "what the round's test-changes.json said and whether it was read: none = it lists no change to the tests; reviewed = it lists changes and they were checked against the diff; absent = there is no such file" },
-        "lenses": { "type": "array", "items": { "type": "string" }, "description": "set by merge_verdicts.py in parallel evaluation: the lenses this verdict was merged from. Absent on a single evaluator's verdict." }
+        "lenses": { "type": "array", "items": { "type": "string" }, "description": "set by merge_verdicts.py in parallel evaluation: the lenses this verdict was merged from. Absent on a single evaluator's verdict." },
+        "rulesChecked": { "type": "array", "items": { "type": "string" }, "description": "the id of every project rule in this round's rules-to-check.json, each of which was checked in the product. Must list exactly those rules." }
       }
     },
     "evaluatedAt": { "type": "string", "format": "date-time" }
@@ -436,6 +444,7 @@ JSON Schema (draft 2020-12):
             }
           },
           "screenshot": { "type": ["string", "null"] },
+          "preExisting": { "type": "boolean", "description": "the defect's cause is unchanged since state.json's baseCommit: it predates this run. Does not change whether the issue is blocking." },
           "verification": { "enum": ["reproduced", "not_reproduced", null], "description": "set by merge_verdicts.py in parallel evaluation, never by an evaluator: whether a second evaluator given only the repro steps saw the same failure. not_reproduced does not remove the issue." }
         }
       }

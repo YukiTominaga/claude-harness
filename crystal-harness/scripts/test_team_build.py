@@ -210,6 +210,7 @@ def main():
         check("gate: a builder name that is not in the plan is denied", gate(root, subagent_type=gen, name="builder-ghost")[1] == "deny")
         check("gate: a named evaluator is denied", gate(root, subagent_type=ev, name="qa")[1] == "deny")
         check("gate: an unnamed evaluator is allowed", gate(root, subagent_type=ev)[1] == "allow")
+        check("gate: a named investigator is denied", gate(root, subagent_type="crystal-harness:harness-investigator", name="sleuth")[1] == "deny")
         check("gate: another agent type may not take a builder name", gate(root, subagent_type="general-purpose", name="builder-api")[1] == "deny")
         check("gate: unrelated named agents are none of its business", gate(root, subagent_type="Explore", name="scout")[1] == "allow")
         check("gate: a named planner is allowed", gate(root, subagent_type="crystal-harness:harness-planner", name="planner")[1] == "allow")

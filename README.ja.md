@@ -49,6 +49,7 @@ flowchart TB
         mv["merge_verdicts.py"]
         tc["test_changes.py"]
         tb["team_build.py<br/>(also a PreToolUse hook)"]
+        rl["rules.py"]
         led["ledger.py<br/>(SubagentStop hook)"]
         guard["guard_harness_artifacts.py<br/>(PreToolUse hook)"]
         inject["inject_harness_context.py<br/>(SessionStart hook)"]
@@ -61,7 +62,7 @@ flowchart TB
 
     human -- "config と spec を承認、<br/>ブロックを解除" --> orch
     orch -- 起動 --> planner & gen & evalr
-    orch -- 実行 --> vc & vv & mv & tc & tb
+    orch -- 実行 --> vc & vv & mv & tc & tb & rl
     orch -- "codex_review.py を実行" --> codex
     evalr -- "UI を操作<br/>(browserVerification: true)" --> pw
     guard -. "各エージェントの担当外への<br/>書き込みをブロック" .-> gen & evalr
@@ -125,6 +126,11 @@ flowchart LR
     loop -- "pass、次のスプリントへ" --> g1
     loop -- "feature ordering を消化" --> final["final assessment<br/>evaluator が spec.md から SPEC-n を導出"]
 ```
+
+ループの横に、もう2つ部品があります。4つ目のエージェント `harness-investigator` は、任意の
+`diagnose` workflow だけが使います。この workflow は、blocking issue が戻ってきた理由を、generator が
+もう一度試す前に突き止めます。`rules.py` は、このプロジェクトの evaluator が学んだこと(issue の記録と、
+人間が承認したルール)を保持し、後のラウンドはそのルールに照らして確認されます。
 
 `teamBuild: true` にすると、最初のビルドを担当する generator 1体が、同時に動く最大3体の
 `builder-<名前>` の teammate に置き換わります。各 builder は guard によって、検査済みの分担表が

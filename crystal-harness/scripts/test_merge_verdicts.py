@@ -233,6 +233,17 @@ def main():
     finally:
         p.close()
 
+    p = Project()
+    try:
+        p.write_all(api={"environment": {"apiVerified": True, "persistenceVerified": True, "rulesChecked": ["R-2"]},
+                         "nonBlockingIssues": [issue("N-api-1", preExisting=True)]})
+        proc, v = p.merge()
+        check("the api lens's checked rules and a pre-existing mark reach the merged verdict",
+              proc.returncode == 0 and v and v["environment"].get("rulesChecked") == ["R-2"]
+              and v["nonBlockingIssues"][0].get("preExisting") is True and p.valid(), proc.stdout)
+    finally:
+        p.close()
+
     p = Project(round_dir=".harness/sprints/03", round_number=1)
     try:
         p.write_all(api={"criteria": [criterion("AC-1", "pass")]})

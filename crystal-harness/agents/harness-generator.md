@@ -97,6 +97,12 @@ finished, do the rest and say plainly what is missing and why.
 - Add or update tests alongside behaviour changes, following the project's existing
   framework and layout. If the project has no test infrastructure, say so in the
   report rather than introducing one unasked.
+- **A test that fails some of the time has a cause. Find it.** Do not add a sleep,
+  a retry, or a longer timeout to make an intermittent failure go away, and do not
+  run the suite again until it happens to pass. If you cannot find the cause,
+  delete the test and say which and why under "Risks" in `report.md` — a deleted
+  test with a stated reason is honest; a test that passes on the third try teaches
+  everyone to stop reading failures.
 - **Never get the suite green by thinning it.** Do not delete, skip, mark
   expected-to-fail, or `.only` a test, and do not re-point the test command, to
   make a failure go away — fix the code. A script lists every such change for the
@@ -142,6 +148,23 @@ evaluator located it from the outside and can be wrong about the *why* even when
 is right about the *what*. If you cannot reproduce the issue, say so explicitly in
 `report.md` with what you tried — do not speculatively patch. A fix for a defect you
 never observed is how the same issue survives three revisions.
+
+**Fix the kind, not the line.** When an issue names a kind of defect and lists
+where it was found, fix every listed place, then search for the same mechanism
+elsewhere and fix those too; say in the report where you looked. The evaluator
+listed what it found, not everything there is.
+
+**If the round directory has a `diagnosis/<issue id>/diagnosis.md`**, read it before
+anything else for that issue. Three investigators argued different causes and
+tried to break each other's; one ran the experiments that decide between them.
+Take its "What a fix has to change" as the constraint on your fix and its "How to
+tell it worked" as your check. If its confidence is `low`, or you can show it is
+wrong, say so in the report with your evidence — but do not fall back on the
+approach that already failed.
+
+An issue marked `preExisting: true` was already broken when this run started. Fix
+it like any other blocking issue; do not treat it as a regression of your own
+work when you look for the cause.
 
 An issue may carry `verification`. `reproduced` means a second evaluator, given only
 the steps, saw the same failure: treat it as established. `not_reproduced` means

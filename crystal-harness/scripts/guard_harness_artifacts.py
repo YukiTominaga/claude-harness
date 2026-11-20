@@ -36,6 +36,9 @@ PROTECTED_LEAVES = ("qa.md", "verdict.json", "screenshots", "lenses")
 ORCHESTRATOR_LEAVES = (
     "state.json", "handoff.md", "journal.md", "config.json", "spec.md", "ledger.jsonl",
     "split.json",  # the ACTIVE split plan of a team build: it is what bounds each builder
+    # The project's learned rules and the issue log they are drawn from. A
+    # generator that can edit them can delete the rule that would catch it.
+    "rules.json", "issues.jsonl",
 )
 # A team build runs several generators at once as agent-team teammates. Hooks see
 # a teammate under the NAME the lead gave it, not its agent type, so a builder is
@@ -47,7 +50,7 @@ BUILDER_PREFIX = "builder-"
 BUILDER_FORBIDDEN_GIT = re.compile(
     r"\bgit\s+(?:-C\s+\S+\s+)?(add|commit|stash|reset|checkout|restore|clean|rebase|merge|switch|pull|cherry-pick|revert|rm|mv|apply|am)\b"
 )
-GUARDED_ROLES = ("harness-generator", "harness-evaluator")
+GUARDED_ROLES = ("harness-generator", "harness-evaluator", "harness-investigator")
 
 
 def role_of(agent_type):
@@ -70,8 +73,15 @@ CODEX_REVIEW_LEAF = "codex-review.md"
 # codex review it is evidence neither agent may author — the generator would be
 # reporting on its own test deletions, the evaluator editing what it must weigh.
 TEST_CHANGES_LEAF = "test-changes.json"
-COMMISSIONED_LEAVES = (CODEX_REVIEW_LEAF, TEST_CHANGES_LEAF)
-EVALUATOR_READ_ONLY_LEAVES = ("report.md",) + COMMISSIONED_LEAVES
+# The project rules this round's diff triggered, written by scripts/rules.py.
+RULES_TO_CHECK_LEAF = "rules-to-check.json"
+COMMISSIONED_LEAVES = (CODEX_REVIEW_LEAF, TEST_CHANGES_LEAF, RULES_TO_CHECK_LEAF)
+# In a round directory the evaluator reads these and never writes them: the
+# generator's testimony (report.md, a team build's split plan and per-builder
+# reports), the commissioned evidence, and an investigator's diagnosis.
+EVALUATOR_READ_ONLY_LEAVES = ("report.md", "split.json", "reports", "diagnosis") + COMMISSIONED_LEAVES
+# The diagnose workflow's working directory inside a round directory.
+DIAGNOSIS_LEAF = "diagnosis"
 
 
 def builder_of(agent_type):
@@ -199,6 +209,16 @@ def evaluator_may_write(parts):
     return False
 
 
+def is_diagnosis(parts):
+    """.harness/{sprints,final}/NN/diagnosis/..."""
+    return (
+        len(parts) >= 5
+        and parts[0] == ".harness"
+        and parts[1] in ("sprints", "final")
+        and parts[3] == DIAGNOSIS_LEAF
+    )
+
+
 def main():
     event = load_event()
 
@@ -292,6 +312,11 @@ def main():
                 "it yourself would make that evidence your own. Read it if you "
                 "are revising."
             )
+        if is_diagnosis(parts) or (len(parts) == 4 and parts[0] == ".harness" and parts[3] == DIAGNOSIS_LEAF):
+            deny(
+                f"harness-generator may not write {rel}. A diagnosis is what the investigators "
+                "concluded about an issue you could not clear; read it, do not author it."
+            )
         if is_orchestrator_file(parts):
             deny(
                 f"harness-generator may not write {rel}. The orchestrating command "
@@ -329,6 +354,13 @@ def main():
                 "that path. If the change is needed, message the builder who owns it (the plan "
                 "is in .harness/split.json) and ask for it; do not work around this."
             )
+
+    if agent == "harness-investigator" and not is_diagnosis(parts):
+        deny(
+            f"harness-investigator may not write {rel}. An investigator reads and runs; the "
+            "only files it writes are its findings under <round dir>/diagnosis/. It never "
+            "edits what it is diagnosing — the fix belongs to the generator."
+        )
 
     if agent == "harness-evaluator" and not evaluator_may_write(parts):
         deny(

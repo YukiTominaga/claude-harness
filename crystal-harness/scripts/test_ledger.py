@@ -504,6 +504,9 @@ def test_budget_and_gate():
         proc, decision = run_gate(root, gen)
         check("at the token cap: gate denies a harness agent", decision == "deny" and proc.returncode == 0, proc.stdout)
         check("at the token cap: gate denies the evaluate workflow", run_gate(root, wf)[1] == "deny")
+        check("at the token cap: gate denies the diagnose workflow and an investigator",
+              run_gate(root, spawn_event(root, "Workflow", name="crystal-harness:diagnose"))[1] == "deny"
+              and run_gate(root, spawn_event(root, "Agent", subagent_type="crystal-harness:harness-investigator"))[1] == "deny")
         check(
             "the bare role name is gated too",
             run_gate(root, spawn_event(root, "Agent", subagent_type="harness-evaluator"))[1] == "deny",

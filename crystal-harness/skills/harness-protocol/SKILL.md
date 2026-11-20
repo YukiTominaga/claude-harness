@@ -22,6 +22,8 @@ A fresh agent reading complete files does not.
 ├── state.json           # machine-readable run state
 ├── ledger.jsonl         # cost ledger, appended by a hook — never by an agent
 ├── split.json           # the ACTIVE split plan, only while a team build is running
+├── issues.jsonl         # every issue every validated verdict raised, appended by a script
+├── rules.json           # project rules the human approved, from defects that came back
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only log of decisions and events
 ├── artifacts/           # Playwright MCP scratch output, browser mode only (gitignored)
@@ -33,6 +35,8 @@ A fresh agent reading complete files does not.
 │       ├── reports/         # team build only: one report per builder
 │       ├── codex-review.md  # independent review of the diff, orchestrator-owned
 │       ├── test-changes.json # what the round did to the tests, orchestrator-owned
+│       ├── rules-to-check.json # the project rules this round's diff triggers
+│       ├── diagnosis/       # diagnose workflow only: one directory per recurring issue
 │       ├── lenses/          # parallel evaluation only: one verdict per lens
 │       │   ├── api.json, api.md, tests.json, …
 │       │   └── verify/      # one reproduction result per blocking issue
@@ -80,6 +84,9 @@ assessment asks whether the product `spec.md` described actually exists.
 | `.harness/split.json` | `scripts/team_build.py activate` / `deactivate`, run by the orchestrating command | the guard, the builders (read-only) |
 | `*/codex-review.md` | the orchestrating command (via `scripts/codex_review.py`) | evaluator (read-only) |
 | `*/test-changes.json` | the orchestrating command (via `scripts/test_changes.py`) | evaluator (read-only), `validate_verdict.py` |
+| `*/rules-to-check.json` | the orchestrating command (via `scripts/rules.py match`) | evaluator (read-only), `validate_verdict.py` |
+| `issues.jsonl`, `rules.json` | `scripts/rules.py` (`record`, and `add` after the human approves) | `/crystal-harness:rules`, `rules.py match` |
+| `*/diagnosis/<issue id>/` | **`harness-investigator` only**, in the diagnose workflow | generator (read-only) |
 | `*/qa.md`, `*/verdict.json`, `*/screenshots/` | **evaluator only** — or, in parallel evaluation, `scripts/merge_verdicts.py` run by the orchestrating command | generator (read-only) |
 | `*/lenses/` | **evaluator only**, one lens or one reproduction per agent | `merge_verdicts.py`; generator never |
 | `state.json`, `handoff.md`, `journal.md` | the orchestrating command | everyone |
@@ -157,6 +164,7 @@ JSON Schema (draft 2020-12):
       "description": "DEPRECATED, schemaVersion 2 only. A run started before 0.10.0 kept its ledger here. Never append to it and never delete it: scripts/ledger.py report still reads it, as calls and wall time only."
     },
     "lastGoodCommit": { "type": ["string", "null"] },
+    "baseCommit": { "type": ["string", "null"], "description": "the commit the run started from, set once by /crystal-harness:init and never changed. A defect whose cause is unchanged since this commit predates the run. null in a repository that had no commit at init." },
     "blockedReason": { "type": ["string", "null"] },
     "updatedAt": { "type": "string", "format": "date-time" }
   },

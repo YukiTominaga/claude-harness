@@ -128,6 +128,14 @@ def cases(root):
         ("eval -> sprints codex-review.md", write(ev, ".harness/sprints/01/codex-review.md", root), DENY),
         ("eval -> final codex-review.md", write(ev, ".harness/final/01/codex-review.md", root), DENY),
         ("eval -> sprints test-changes.json", write(ev, ".harness/sprints/01/test-changes.json", root), DENY),
+        # Project rules: neither agent edits the rules, the log they come from,
+        # or the list of rules a round was handed.
+        ("gen -> rules.json", write(gen, ".harness/rules.json", root), DENY),
+        ("gen -> issues.jsonl", write(gen, ".harness/issues.jsonl", root), DENY),
+        ("gen -> rules-to-check.json", write(gen, ".harness/final/02/rules-to-check.json", root), DENY),
+        ("eval -> rules.json", write(ev, ".harness/rules.json", root), DENY),
+        ("eval -> rules-to-check.json", write(ev, ".harness/final/02/rules-to-check.json", root), DENY),
+        ("gen -> the app's own rules.json", write(gen, "src/rules.json", root), ALLOW),
         # What the evaluator legitimately does.
         ("eval -> final verdict.json", write(ev, ".harness/final/01/verdict.json", root), ALLOW),
         ("eval -> sprints qa.md", write(ev, ".harness/sprints/01/qa.md", root), ALLOW),
@@ -177,6 +185,16 @@ def cases(root):
         ("gen -> the active split plan", write(gen, ".harness/split.json", root), DENY),
         ("namespaced gen -> git commit is its normal way to commit", bash(ns_gen, "git add -A && git commit -m feat", root), ALLOW),
         ("eval -> the active split plan", write(ev, ".harness/split.json", root), DENY),
+        # ---- investigators diagnose; they do not fix, grade, or plan.
+        ("investigator -> its findings", write("crystal-harness:harness-investigator", ".harness/final/02/diagnosis/B-api-1/h-state.md", root), ALLOW),
+        ("investigator -> application source", write("crystal-harness:harness-investigator", "src/App.tsx", root), DENY),
+        ("investigator -> verdict.json", write("harness-investigator", ".harness/final/02/verdict.json", root), DENY),
+        ("investigator -> state.json", write("harness-investigator", ".harness/state.json", root), DENY),
+        ("investigator -> bash running the app", bash("harness-investigator", "python3 app.py & curl -s localhost:8765/notes", root), ALLOW),
+        ("gen -> a diagnosis", write(gen, ".harness/final/02/diagnosis/B-api-1/diagnosis.md", root), DENY),
+        ("eval -> a diagnosis", write(ev, ".harness/final/02/diagnosis/B-api-1/diagnosis.md", root), DENY),
+        ("eval -> a builder's report", write(ev, ".harness/final/01/reports/api.md", root), DENY),
+        ("eval -> the round's split plan", write(ev, ".harness/final/01/split.json", root), DENY),
         # Agents outside the harness are none of the guard's business.
         ("unrelated agent -> verdict.json", {"cwd": root, "tool_name": "Write", "tool_input": {"file_path": ".harness/sprints/01/verdict.json"}}, ALLOW),
         # Fail closed: an unevaluatable policy must not read as a satisfied one.

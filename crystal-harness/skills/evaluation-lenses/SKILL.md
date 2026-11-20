@@ -75,7 +75,7 @@ Rules the merge enforces — get any of them wrong and the round has no verdict:
 | Lens | Dimensions it scores | `environment` keys |
 | --- | --- | --- |
 | `tests` | none — `"scores": {}` | `testsVerified`, `testChanges` |
-| `api` | `productDepth`, `functionality` | `apiVerified`, `persistenceVerified`, optional `appUrl`, `apiUrl` |
+| `api` | `productDepth`, `functionality` | `apiVerified`, `persistenceVerified`, optional `appUrl`, `apiUrl`, `rulesChecked` |
 | `code` | `codeQuality` | `codexReview` |
 | `screen` | `productDepth`, `functionality`, `design`, `originality`, `craft` | `verificationMode` (`browser` or `degraded`), `playwrightAvailable`, optional `degradedReason`, `appUrl` |
 
@@ -114,6 +114,9 @@ application at all.
    `reasons` against the diff and against the generator's `report.md`: a deleted,
    skipped or re-pointed test with no stated, defensible reason is a blocking
    issue, because the suite it belonged to is evidence the other lenses lean on.
+   The report also lists sleeps and retries added to tests
+   (`waitsAndRetriesAdded`); apply the evaluator's rule for those. And run the
+   suite **once**: a suite that needs a second run to pass is failing.
 4. Judge whether the tests are worth leaning on at all — would they fail if the
    behaviour broke? A suite that asserts nothing is a non-blocking issue here and a
    Code quality matter for the `code` lens.
@@ -142,6 +145,14 @@ the test suite directly" steps, except that you do not run the test suite — th
   does.
 - **If you do not own the criteria** (the `screen` lens does): you still probe the
   whole API surface and file what you find as issues, with `criterionId: null`.
+
+- **Project rules are yours.** If the round directory has `rules-to-check.json`,
+  do each listed rule's `check` in the product and list every rule id you checked
+  in `environment.rulesChecked`, held or not. A rule that does not hold is a
+  blocking issue. The merge carries your list into the verdict, and the validator
+  rejects a verdict that leaves a listed rule out.
+- Mark an issue `preExisting: true` under the evaluator's rule for that, whichever
+  lens you are.
 
 Score `productDepth` and `functionality` from what you could drive.
 

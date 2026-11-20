@@ -194,6 +194,31 @@ def cases():
         ("environment lists the lenses merged", mutate("headless", **{"environment.lenses": ["tests", "api", "code"]}), OK, None),
         ("environment.lenses must be strings", mutate("headless", **{"environment.lenses": ["api", 3]}), INVALID, "lenses"),
         ("environment.testChanges outside the enum", mutate("headless", **{"environment.testChanges": "fine"}), INVALID, "testChanges"),
+        ("issue marked pre-existing", mutate(
+            "browser", nonBlockingIssues=[dict(issue("N-1"), preExisting=True)],
+        ), OK, None),
+        ("issue preExisting must be a boolean", mutate(
+            "browser", nonBlockingIssues=[dict(issue("N-1"), preExisting="yes")],
+        ), INVALID, "preExisting"),
+        ("environment.rulesChecked must be strings", mutate("headless", **{"environment.rulesChecked": [1]}), INVALID, "rulesChecked"),
+    ]
+
+
+def rule_cases():
+    """(name, verdict, report, expected, needle) — validated with --rules."""
+    two = {"rules": [{"id": "R-1", "check": "x"}, {"id": "R-3", "check": "y"}]}
+    none = {"rules": []}
+    return [
+        ("every triggered rule is listed", mutate("headless", **{"environment.rulesChecked": ["R-3", "R-1"]}), two, OK, None),
+        ("one triggered rule is not listed", mutate("headless", **{"environment.rulesChecked": ["R-1"]}), two, INVALID, "missing R-3"),
+        ("no rulesChecked at all", base("headless"), two, INVALID, "missing R-1, R-3"),
+        ("a rule listed that was not triggered", mutate("headless", **{"environment.rulesChecked": ["R-1", "R-3", "R-9"]}), two, INVALID, "did not trigger"),
+        ("no rule triggered, nothing listed", base("headless"), none, OK, None),
+        ("no rule triggered, one listed anyway", mutate("headless", **{"environment.rulesChecked": ["R-1"]}), none, INVALID, "did not trigger"),
+        ("unreadable rules report", base("headless"), "{ nope", INVALID, "--rules"),
+        ("a failing verdict still has to list its rules", mutate(
+            "headless", overall="fail", blockingIssues=[issue()], criteria=[criterion("AC-1", "fail")],
+        ), two, INVALID, "missing R-1, R-3"),
     ]
 
 
@@ -274,11 +299,29 @@ def main():
                     print(f"      {proc.stdout.strip().splitlines()[0]}")
             print(f"{'PASS' if ok else 'FAIL'}  {name:<44} want={expected:<8} got={got}")
 
+        rules_path = os.path.join(root, "rules-to-check.json")
+        for name, verdict, report, expected, needle in rule_cases():
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(verdict, f)
+            with open(rules_path, "w", encoding="utf-8") as f:
+                f.write(report if isinstance(report, str) else json.dumps(report))
+            proc = subprocess.run(["python3", VALIDATOR, path, "--rules", rules_path], capture_output=True, text=True)
+            got = OK if proc.returncode == 0 else INVALID
+            ok = got == expected
+            if ok and needle and needle not in proc.stdout:
+                ok = False
+                got = f"invalid, but not about {needle!r}"
+            if not ok:
+                failures.append(name)
+                if proc.stdout.strip():
+                    print(f"      {proc.stdout.strip().splitlines()[0]}")
+            print(f"{'PASS' if ok else 'FAIL'}  {name:<44} want={expected:<8} got={got}")
+
         print()
         if failures:
             print(f"{len(failures)} failing case(s): {', '.join(failures)}")
             return 1
-        print(f"all {len(cases()) + len(test_change_cases())} verdict cases pass")
+        print(f"all {len(cases()) + len(test_change_cases()) + len(rule_cases())} verdict cases pass")
         return 0
     finally:
         shutil.rmtree(root, ignore_errors=True)

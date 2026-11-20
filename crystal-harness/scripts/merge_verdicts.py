@@ -64,7 +64,7 @@ LENSES = {
     "api": {
         "dimensions": ("productDepth", "functionality"),
         "env_required": ("apiVerified", "persistenceVerified"),
-        "env_allowed": ("apiVerified", "persistenceVerified", "appUrl", "apiUrl"),
+        "env_allowed": ("apiVerified", "persistenceVerified", "appUrl", "apiUrl", "rulesChecked"),
     },
     "screen": {
         "dimensions": ("productDepth", "functionality", "design", "originality", "craft"),
@@ -220,6 +220,10 @@ def validate_lens(name, data, expect, owner, headless):
                 problem(where, f"environment.{key} must be a boolean")
         if "testChanges" in env and env["testChanges"] not in ("none", "reviewed", "absent"):
             problem(where, 'environment.testChanges must be "none", "reviewed" or "absent"')
+        if "rulesChecked" in env and (
+            not isinstance(env["rulesChecked"], list) or any(not isinstance(x, str) for x in env["rulesChecked"])
+        ):
+            problem(where, "environment.rulesChecked must be an array of rule ids")
         if "codexReview" in env and env["codexReview"] not in ("confirmed", "present", "absent"):
             problem(where, 'environment.codexReview must be "confirmed", "present" or "absent"')
         if name == "screen":
@@ -340,6 +344,8 @@ def merge(lens_data, lenses, expect, reproductions):
         "testChanges": env_of["tests"]["testChanges"],
         "lenses": list(lenses),
     }
+    if "rulesChecked" in env_of["api"]:
+        environment["rulesChecked"] = env_of["api"]["rulesChecked"]
 
     overall = "pass" if all(lens_data[name]["lensVerdict"] == "pass" for name in lenses) else "fail"
     verdict = {

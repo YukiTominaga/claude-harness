@@ -81,6 +81,7 @@ The `harness` block, with these defaults, is part of what you show:
     "reproduceBlockingIssues": true,
     "teamBuild": false,
     "maxBuilders": 3,
+    "diagnoseRecurringIssues": false,
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxAcceptanceCriteria": 20,
@@ -110,6 +111,12 @@ an interactive session — not `claude -p`); without them the build quietly uses
 single generator. Offer it only when the product has a real seam — a server and a
 client, independent modules — and say that it costs more tokens than one
 generator and that nothing has yet measured what it buys.
+
+`diagnoseRecurringIssues` defaults to `false`. Set to `true`, a blocking issue that
+comes back after one fix is handed to the `diagnose` workflow before the generator
+tries again: eight investigators gather evidence, argue three competing causes
+apart, try to break each, and test what survives. It is the most expensive single
+step in the harness and it runs only on an issue that has already cost a revision.
 
 `maxRunTokens` and `maxRunCostUsd` cap what the run may spend on agents, as counted
 by the ledger. Both default to `null` (no cap). When either is reached the loop
@@ -174,7 +181,9 @@ After confirmation, create:
 - `.harness/config.json` — as confirmed.
 - `.harness/state.json` — `schemaVersion: 3`, `phase: "init"`, `currentSprint: null`,
   `currentRound: null`, `sprints: []`, `finalRounds: []`, `repeatedIssueFingerprints: {}`,
-  `lastGoodCommit` set to `git rev-parse HEAD` if the repo has a commit, else `null`.
+  `lastGoodCommit` and `baseCommit` both set to `git rev-parse HEAD` if the repo has a
+  commit, else `null`. `baseCommit` is never changed again: it is how a later
+  evaluator tells a defect this run introduced from one it inherited.
 - `.harness/journal.md` — one entry recording initialization and what was detected.
 - `.harness/handoff.md` — using the template in `harness-protocol`, with
   "Next action" = run `/crystal-harness:plan <idea>`.

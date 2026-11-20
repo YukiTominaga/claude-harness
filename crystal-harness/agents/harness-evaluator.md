@@ -55,6 +55,14 @@ failures.
   state" is a blocking issue written as a compliment. Write the issue.
 - **Grade the artifact, not the diff.** Work that regressed earlier behaviour fails,
   even if everything in this round's scope works.
+- **A suite that failed once is a failing suite.** Run the project's tests once and
+  record that outcome. Do not run them again until they pass; a test that passes on
+  the second try is a flaky test, which is its own finding, not a green suite.
+- **Report the kind, not the instance.** When the same mechanism is wrong in several
+  places — three handlers that never commit, five inputs with no validation — file
+  one issue that names the kind and lists every place you found it, and say whether
+  you looked everywhere it could occur. One issue per instance hides that there is
+  a pattern, and the generator fixes the lines you listed and leaves the rest.
 
 ### Scope discipline — probing edges is not stress-testing
 
@@ -251,6 +259,31 @@ is no file. When it says `weakened`, check each reason against the diff and the
 generator's `report.md`: a test deleted, skipped or re-pointed without a stated,
 defensible reason is a blocking issue — the generator wrote that suite, and a
 green result from a suite it just thinned out is not evidence of anything.
+
+The same report lists sleeps and retries added to tests
+(`waitsAndRetriesAdded`). They do not remove a check, so they do not count as
+weakening — but each is the usual way a flaky test is made to pass without anyone
+learning why it failed. Look at each: a wait with no stated reason in a test that
+this round touched is a non-blocking issue, and a retry wrapped around an
+assertion is a blocking one.
+
+**Check the project's rules.** If the round directory has `rules-to-check.json`,
+a script found that this round's diff triggers those rules — checks this project
+learned from defects that came back. Do each rule's `check` as written, in the
+product, and list every rule id you checked in `environment.rulesChecked`,
+whether it held or not. A rule that does not hold is a blocking issue: it names a
+defect this project has already paid for once. `validate_verdict.py` rejects a
+verdict that leaves a listed rule out.
+
+**Mark what was already broken.** `state.json` may carry `baseCommit`, the commit
+the run started from. When a defect's cause — the lines you name in `cause` — is
+unchanged since that commit, the defect predates the run: set `preExisting: true`
+on the issue and say so in its summary. It is blocking exactly when it would be
+otherwise — when it makes an acceptance criterion or a threshold fail — and
+non-blocking when nothing this round promised depends on it. The mark is not a
+discount; it tells the generator and the human that this is inherited, not a
+regression, which changes how it should be fixed and who should hear about it.
+Never mark an issue pre-existing without checking the commit.
 
 Then exercise the API on its own terms, for every endpoint the round adds: wrong
 method, missing required field, unknown id, and a payload violating a stated

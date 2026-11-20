@@ -14,6 +14,7 @@ and reports, for the evaluator and for validate_verdict.py:
 - test files added, modified, deleted, renamed;
 - test cases removed and added inside modified test files;
 - skip / only markers added;
+- sleeps and retries added to tests (reported, but not counted as weakening);
 - a changed `scripts.test` in package.json.
 
 `weakened` is true when any of those reduces what the suite checks. It is a
@@ -73,6 +74,25 @@ SKIP_MARKER = re.compile(
       | \#\[ignore\b
       | @(Disabled|Ignore)\b
       | \bSkip\s*=\s*"
+    )""",
+    re.VERBOSE,
+)
+
+
+# A sleep or a retry added to a test is the usual way a flaky test is made to
+# pass without finding out why it fails. It does not remove a check, so it does
+# not set `weakened` — but the evaluator is shown every one.
+WAIT_OR_RETRY = re.compile(
+    r"""(
+        \btime\.sleep\s*\(
+      | \bThread\.sleep\s*\(
+      | \bsetTimeout\s*\(
+      | \bwaitForTimeout\s*\(
+      | \bawait\s+sleep\s*\(
+      | \bjest\.retryTimes\s*\(
+      | @(pytest\.mark\.)?flaky\b
+      | \bretries\s*[:=]\s*[1-9]
+      | \.retry\s*\(
     )""",
     re.VERBOSE,
 )
@@ -140,8 +160,11 @@ def build_report(repo, base):
     files = {"added": [], "modified": [], "deleted": [], "renamed": []}
     cases = {"added": 0, "removed": 0}
     skip_markers, command_changes, reasons = [], [], []
+    waits = []
 
     for status, old_path, new_path in name_status(repo, base_sha):
+        if new_path.startswith(".harness/") or old_path.startswith(".harness/"):
+            continue  # the harness's own artifacts are never the project's tests
         if os.path.basename(new_path) == "package.json" and status in ("M", "R"):
             before = package_test_script(repo, base_sha, old_path)
             after = package_test_script(repo, head, new_path)
@@ -179,6 +202,8 @@ def build_report(repo, base):
             if SKIP_MARKER.search(text):
                 skip_markers.append({"file": new_path, "line": number, "text": text.strip()[:200]})
                 reasons.append(f"{new_path}:{number}: skip/only marker added")
+            elif WAIT_OR_RETRY.search(text):
+                waits.append({"file": new_path, "line": number, "text": text.strip()[:200]})
 
     return {
         "base": base_sha,
@@ -186,6 +211,7 @@ def build_report(repo, base):
         "testFiles": files,
         "testCases": cases,
         "skipMarkersAdded": skip_markers,
+        "waitsAndRetriesAdded": waits,
         "testCommandChanged": command_changes,
         "weakened": bool(reasons),
         "reasons": reasons,

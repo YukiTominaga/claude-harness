@@ -174,6 +174,24 @@ def main():
 
     # ---- legitimate changes that must not raise the alarm
     scenario(
+        "a sleep added to a test is reported but is not weakening",
+        lambda repo: write(repo, "tests/test_notes.py", PY_TESTS.replace("def test_delete_note(client):", "def test_delete_note(client):\n    time.sleep(2)")),
+        False,
+        lambda r: len(r["waitsAndRetriesAdded"]) == 1 and r["waitsAndRetriesAdded"][0]["file"] == "tests/test_notes.py",
+    )
+    scenario(
+        "a retry added to a test is reported",
+        lambda repo: write(repo, "src/__tests__/math.test.ts", "jest.retryTimes(3)\n" + JS_TESTS),
+        False,
+        lambda r: len(r["waitsAndRetriesAdded"]) == 1,
+    )
+    scenario(
+        "a sleep in application code is not a test change",
+        lambda repo: write(repo, "src/worker.py", "import time\ntime.sleep(1)\n"),
+        False,
+        lambda r: r["waitsAndRetriesAdded"] == [],
+    )
+    scenario(
         "adding a test case is not weakening",
         lambda repo: write(repo, "tests/test_notes.py", PY_TESTS + "\n\ndef test_list_notes(client):\n    assert client.get('/notes').status_code == 200\n"),
         False,
