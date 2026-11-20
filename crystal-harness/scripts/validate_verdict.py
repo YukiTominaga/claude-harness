@@ -13,8 +13,16 @@ load-bearing: `browserVerification: false` waives three of the six dimensions, s
 without a machine check, "headless" would be a way to get a pass by grading less.
 The rules below are the price of the mode existing.
 
+It can also hold a verdict to what the round did to the project's tests. Given
+`--test-changes <report>` (the output of test_changes.py), it requires the
+evaluator to have reviewed that report, and — when the report says the suite was
+weakened — rejects any pass that was carried from an earlier round on the
+strength of the suite. A test the generator deleted cannot vouch for anything.
+
 Usage:
     python3 validate_verdict.py .harness/sprints/03/verdict.json
+    python3 validate_verdict.py .harness/final/02/verdict.json \
+        --test-changes .harness/final/02/test-changes.json
 
 Exits 0 printing "ok" when the file conforms; exits 1 listing every violation
 otherwise, so the evaluator can be sent back once with the full list.
@@ -46,13 +54,16 @@ TOP_ALLOWED = set(TOP_REQUIRED) | {"$schema", "sprint"}
 CRITERION_REQUIRED = ("id", "text", "result")
 CRITERION_ALLOWED = set(CRITERION_REQUIRED) | {"evidence", "browserOnly", "screenshot"}
 ISSUE_REQUIRED = ("id", "summary", "repro", "observed", "expected", "cause")
-ISSUE_ALLOWED = set(ISSUE_REQUIRED) | {"criterionId", "dimension", "screenshot"}
+ISSUE_ALLOWED = set(ISSUE_REQUIRED) | {"criterionId", "dimension", "screenshot", "verification"}
+VERIFICATION_VALUES = ("reproduced", "not_reproduced", None)
 CAUSE_ALLOWED = {"file", "line", "mechanism"}
 ENV_REQUIRED = ("verificationMode", "playwrightAvailable", "degraded")
 ENV_ALLOWED = set(ENV_REQUIRED) | {
     "degradedReason", "appUrl", "apiUrl", "apiVerified", "persistenceVerified",
-    "testsVerified", "codexReview",
+    "testsVerified", "codexReview", "testChanges", "lenses",
 }
+TEST_CHANGES_VALUES = ("none", "reviewed", "absent", None)
+CARRIED_PREFIX = "carried from round"
 
 errors = []
 
@@ -96,6 +107,8 @@ def check_issue(issue, path):
         err(f"{path}.dimension", f"must be one of {SCORE_KEYS} or null")
     check_str_or_null(issue, "criterionId", path)
     check_str_or_null(issue, "screenshot", path)
+    if "verification" in issue and issue["verification"] not in VERIFICATION_VALUES:
+        err(f"{path}.verification", 'must be "reproduced", "not_reproduced" or null')
     cause = issue.get("cause")
     if "cause" in issue:
         if not isinstance(cause, dict):
@@ -210,16 +223,70 @@ def check_mode_consistency(verdict, env, mode, criteria):
                 )
 
 
+def is_carried(criterion):
+    evidence = criterion.get("evidence") if isinstance(criterion, dict) else None
+    return isinstance(evidence, str) and evidence.strip().casefold().startswith(CARRIED_PREFIX)
+
+
+def check_test_changes(env, criteria, report_path):
+    """Hold the verdict to what the round did to the tests.
+
+    A re-check round may carry a criterion that passed before, on the evidence
+    that the diff does not touch it and the test suite still passes. That
+    evidence is void when the suite itself was weakened in the same diff.
+    """
+    try:
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        weakened = report["weakened"]
+        if not isinstance(weakened, bool):
+            raise ValueError("weakened is not a boolean")
+    except Exception as exc:  # noqa: BLE001
+        err("--test-changes", f"could not read {report_path} as a test-changes report: {exc}")
+        return
+
+    seen = env.get("testChanges") if isinstance(env, dict) else None
+    if weakened:
+        if seen != "reviewed":
+            err(
+                "$.environment.testChanges",
+                'must be "reviewed" — the test-changes report says this round weakened the '
+                "test suite, and the evaluator has to have read it",
+            )
+        for i, criterion in enumerate(criteria if isinstance(criteria, list) else []):
+            if isinstance(criterion, dict) and criterion.get("result") == "pass" and is_carried(criterion):
+                err(
+                    f"$.criteria[{i}]",
+                    "is a carried pass, but this round deleted, skipped or re-pointed tests "
+                    "— a weakened suite cannot vouch for it; re-verify the criterion",
+                )
+    elif seen not in ("none", "reviewed"):
+        err(
+            "$.environment.testChanges",
+            'must be "none" or "reviewed" — a test-changes report exists for this round',
+        )
+
+
 def main():
-    if len(sys.argv) != 2:
-        print("usage: validate_verdict.py <verdict.json>", file=sys.stderr)
+    args = sys.argv[1:]
+    test_changes = None
+    if "--test-changes" in args:
+        at = args.index("--test-changes")
+        if at + 1 >= len(args):
+            print("usage: validate_verdict.py <verdict.json> [--test-changes <report.json>]", file=sys.stderr)
+            return 1
+        test_changes = args[at + 1]
+        del args[at:at + 2]
+    if len(args) != 1:
+        print("usage: validate_verdict.py <verdict.json> [--test-changes <report.json>]", file=sys.stderr)
         return 1
+    verdict_path = args[0]
 
     try:
-        with open(sys.argv[1], "r", encoding="utf-8") as f:
+        with open(verdict_path, "r", encoding="utf-8") as f:
             verdict = json.load(f)
     except Exception as exc:  # noqa: BLE001
-        print(f"invalid: could not read or parse {sys.argv[1]}: {exc}")
+        print(f"invalid: could not read or parse {verdict_path}: {exc}")
         return 1
 
     if not isinstance(verdict, dict):
@@ -309,6 +376,12 @@ def main():
                 check_str_or_null(env, key, "$.environment")
             if "codexReview" in env and env["codexReview"] not in ("confirmed", "present", "absent", None):
                 err("$.environment.codexReview", 'must be "confirmed", "present", "absent" or null')
+            if "testChanges" in env and env["testChanges"] not in TEST_CHANGES_VALUES:
+                err("$.environment.testChanges", 'must be "none", "reviewed", "absent" or null')
+            if "lenses" in env and (
+                not isinstance(env["lenses"], list) or any(not isinstance(x, str) for x in env["lenses"])
+            ):
+                err("$.environment.lenses", "must be an array of strings")
             if "verificationMode" in env:
                 if env["verificationMode"] not in MODES:
                     err("$.environment.verificationMode", f"must be one of {MODES}")
@@ -316,6 +389,8 @@ def main():
                     mode = env["verificationMode"]
 
     check_mode_consistency(verdict, env, mode, criteria)
+    if test_changes is not None:
+        check_test_changes(env, criteria, test_changes)
 
     if errors:
         for message in errors:

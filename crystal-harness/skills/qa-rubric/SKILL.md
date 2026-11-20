@@ -95,6 +95,22 @@ Waiving three dimensions is safe only if the other three were earned. A headless
 `validate_verdict.py` enforces all of this. Do not argue with it; a verdict it
 rejects is a verdict the loop must not act on.
 
+### What the test suite may vouch for
+
+Tests the generator wrote are not independent evidence of correctness, and they
+stop being evidence at all the moment the same round thins them out. Each round
+directory may hold a `test-changes.json`, written by a script before you were
+spawned: test files deleted, test cases removed, skip or only markers added, a
+re-pointed test command, and one flag, `weakened`. Read it before you rely on the
+suite and record that in `environment.testChanges`.
+
+When it says `weakened`, two things follow. A change it lists that the generator
+did not justify is a blocking issue. And nothing may be carried: every criterion is
+verified afresh this round, because a `carried from round <n>:` pass rests on the
+suite still covering what it covered before. `validate_verdict.py --test-changes`
+rejects a verdict that carries a pass across a weakened suite, in a passing and in
+a failing verdict alike.
+
 A criterion marked `not_verified` never counts toward a pass. If enough criteria are
 `not_verified` that you cannot tell whether the work is sound, the verdict is `fail`
 with a blocking issue naming what could not be checked and why.
@@ -385,7 +401,9 @@ JSON Schema (draft 2020-12):
         "apiVerified": { "type": "boolean", "description": "true if endpoints were exercised outside the browser" },
         "persistenceVerified": { "type": "boolean", "description": "true if a write was confirmed in the datastore or via the API after a reload" },
         "testsVerified": { "type": "boolean", "description": "true if the project's own test suite was executed by the evaluator and passed" },
-        "codexReview": { "enum": ["confirmed", "present", "absent", null], "description": "confirmed once its findings were checked against the code; present if the file exists but was not usable; absent otherwise" }
+        "codexReview": { "enum": ["confirmed", "present", "absent", null], "description": "confirmed once its findings were checked against the code; present if the file exists but was not usable; absent otherwise" },
+        "testChanges": { "enum": ["none", "reviewed", "absent", null], "description": "what the round's test-changes.json said and whether it was read: none = it lists no change to the tests; reviewed = it lists changes and they were checked against the diff; absent = there is no such file" },
+        "lenses": { "type": "array", "items": { "type": "string" }, "description": "set by merge_verdicts.py in parallel evaluation: the lenses this verdict was merged from. Absent on a single evaluator's verdict." }
       }
     },
     "evaluatedAt": { "type": "string", "format": "date-time" }
@@ -417,7 +435,8 @@ JSON Schema (draft 2020-12):
               "mechanism": { "type": "string", "description": "why it fails, or 'not located; searched …'" }
             }
           },
-          "screenshot": { "type": ["string", "null"] }
+          "screenshot": { "type": ["string", "null"] },
+          "verification": { "enum": ["reproduced", "not_reproduced", null], "description": "set by merge_verdicts.py in parallel evaluation, never by an evaluator: whether a second evaluator given only the repro steps saw the same failure. not_reproduced does not remove the issue." }
         }
       }
     }

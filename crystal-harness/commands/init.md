@@ -77,14 +77,34 @@ The `harness` block, with these defaults, is part of what you show:
     "contextReset": true,
     "browserVerification": false,
     "codexReview": "auto",
+    "parallelEvaluation": false,
+    "reproduceBlockingIssues": true,
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxAcceptanceCriteria": 20,
     "maxFinalQaRounds": 5,
+    "maxRunTokens": null,
+    "maxRunCostUsd": null,
     "costPerMTokUsd": null
   }
 }
 ```
+
+`parallelEvaluation` defaults to `false`: a round is graded by one evaluator. Set
+to `true`, each round is graded by one evaluator per lens — `tests`, `api`, `code`,
+and `screen` when `browserVerification` is on — run by the plugin's `evaluate`
+workflow and merged by a script that can only be stricter than its parts. It costs
+more agents per round and there is not yet a measurement of what it finds that a
+single evaluator misses, which is why it is off until the human asks for it; say
+so if they do. `reproduceBlockingIssues` only matters with it on: each blocking
+issue is then re-tried by a fresh evaluator given nothing but its steps, and the
+result is recorded on the issue. It never removes an issue.
+
+`maxRunTokens` and `maxRunCostUsd` cap what the run may spend on agents, as counted
+by the ledger. Both default to `null` (no cap). When either is reached the loop
+stops and asks, and a hook refuses to start another harness agent until the human
+raises it. `maxRunCostUsd` needs `costPerMTokUsd` to be set — a cost cap with no
+prices is reported as unenforceable and stops the run, rather than being ignored.
 
 `browserVerification` defaults to `false`. Driving the app through Playwright is
 the single most expensive thing a QA round does, and most rounds do not need it:

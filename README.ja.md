@@ -46,6 +46,8 @@ flowchart TB
     subgraph det["決定的なコード — モデルも判断もなし"]
         vc["validate_contract.py"]
         vv["validate_verdict.py"]
+        mv["merge_verdicts.py"]
+        tc["test_changes.py"]
         led["ledger.py<br/>(SubagentStop hook)"]
         guard["guard_harness_artifacts.py<br/>(PreToolUse hook)"]
         inject["inject_harness_context.py<br/>(SessionStart hook)"]
@@ -58,7 +60,7 @@ flowchart TB
 
     human -- "config と spec を承認、<br/>ブロックを解除" --> orch
     orch -- 起動 --> planner & gen & evalr
-    orch -- 実行 --> vc & vv
+    orch -- 実行 --> vc & vv & mv & tc
     orch -- "codex_review.py を実行" --> codex
     evalr -- "UI を操作<br/>(browserVerification: true)" --> pw
     guard -. "各エージェントの担当外への<br/>書き込みをブロック" .-> gen & evalr
@@ -122,6 +124,11 @@ flowchart LR
     loop -- "pass、次のスプリントへ" --> g1
     loop -- "feature ordering を消化" --> final["final assessment<br/>evaluator が spec.md から SPEC-n を導出"]
 ```
+
+`parallelEvaluation: true` にすると、上の図で1体だった evaluator が、観点(`tests`、`api`、`code`、
+ブラウザが有効なら `screen`)ごとの evaluator に置き換わり、プラグインの `evaluate` workflow が
+それらを実行します。`merge_verdicts.py` が各観点のファイルからラウンドの `verdict.json` を作り
+(観点が欠けていれば verdict は作りません)、ループの残りは変わりません。
 
 ### 誰が何を判断するか
 

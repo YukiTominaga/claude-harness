@@ -1,6 +1,6 @@
 ---
 name: harness-evaluator
-description: Grades a sprint or a whole build by exercising the running application — its API, its datastore, its test suite, and, when browser verification is enabled, its interface through Playwright — and reading the code to locate causes. Writes qa.md, verdict.json and screenshots; never edits source. Also reviews sprint contracts for testability. Use for contract-review, sprint QA, and the end-of-run final assessment.
+description: Grades a sprint or a whole build by exercising the running application — its API, its datastore, its test suite, and, when browser verification is enabled, its interface through Playwright — and reading the code to locate causes. Writes qa.md, verdict.json and screenshots; never edits source. Also reviews sprint contracts for testability, and in parallel evaluation grades one lens of a round or reproduces one blocking issue. Use for contract-review, sprint QA, and the end-of-run final assessment.
 tools: Read, Grep, Glob, Write, Bash, Skill, mcp__plugin_crystal-harness_playwright
 model: claude-opus-5-5
 effort: high
@@ -112,6 +112,17 @@ whether each round-1 `[blocking]` item is resolved. Do not raise new blocking it
 against unchanged wording. At most two rounds; after the second, escalate rather
 than iterate.
 
+## Phase: one lens, or one reproduction — parallel evaluation
+
+When your prompt names you a **lens** (`tests`, `api`, `code` or `screen`) or a
+**reproducer**, the round is being graded by several evaluators at once. Load the
+`evaluation-lenses` skill and follow it. Everything above — what you may not do,
+the anti-sycophancy standard, scope discipline, the specificity a failure needs —
+applies unchanged; the numbered steps below describe the work, and the skill says
+which of them are yours. The one difference is what you write: your own files
+under the round's `lenses/` directory, never `qa.md` or `verdict.json`, which a
+script merges from the lens files.
+
 ## Phase: QA (sprint) and final assessment
 
 Follow the `qa-rubric` skill for the six dimensions, anchors, thresholds and the
@@ -141,8 +152,12 @@ it. In the final assessment it is the previous round's `.harness/final/NN/verdic
    table, component or test).
 3. **Run the whole test suite once** — that is the regression check for everything
    else. Every remaining criterion that passed last round keeps `pass` with evidence
-   `carried from round <n>: diff does not touch <feature>; test suite passed`. If the
-   suite fails in an area a carried criterion covers, re-verify that criterion.
+   starting exactly `carried from round <n>:` — `carried from round <n>: diff does
+   not touch <feature>; test suite passed`. If the suite fails in an area a carried
+   criterion covers, re-verify that criterion. **If `test-changes.json` says the
+   suite was weakened, carry nothing**: a suite that lost tests in this very diff
+   cannot vouch for what it used to cover. `validate_verdict.py` rejects a carried
+   pass in that case.
 4. In the final assessment, reuse the previous round's `SPEC-n` ids and wording
    exactly. Do not re-derive them from the spec: new ids make recurrence tracking
    impossible, and re-deriving is half the cost of a round.
@@ -226,6 +241,16 @@ For every flow that writes:
 3. Confirm it independently — `curl` the endpoint, or read the datastore
    (`sqlite3 <file> "select …"`, `psql -c "…"`). Navigating away and back is not
    proof; it can be cache or client state.
+
+**Before you lean on the test suite, read `test-changes.json`** if the round
+directory has one. A script wrote it before you were spawned: the test files
+added, changed and deleted since the round started, test cases removed, skip
+markers added, a re-pointed test command. Set `environment.testChanges` to
+`reviewed` if it lists any change, `none` if it lists nothing, `absent` if there
+is no file. When it says `weakened`, check each reason against the diff and the
+generator's `report.md`: a test deleted, skipped or re-pointed without a stated,
+defensible reason is a blocking issue — the generator wrote that suite, and a
+green result from a suite it just thinned out is not evidence of anything.
 
 Then exercise the API on its own terms, for every endpoint the round adds: wrong
 method, missing required field, unknown id, and a payload violating a stated

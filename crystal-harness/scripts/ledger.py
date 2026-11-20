@@ -25,6 +25,10 @@ Subcommands:
     ledger.py hook      SubagentStop hook entry point (event JSON on stdin)
     ledger.py append    record a component that is not an agent (codex-review)
     ledger.py report    aggregate the ledger; --json for machines
+    ledger.py budget    compare the run's total with harness.maxRunTokens /
+                        harness.maxRunCostUsd; exit 3 when a cap is reached
+    ledger.py gate      PreToolUse hook on Agent|Workflow: deny spawning a
+                        harness agent once a cap is reached
 
 The file is JSON Lines and append-only. An agent that stops more than once (a
 teammate going idle repeatedly, a subagent continued with SendMessage) writes a
@@ -567,6 +571,136 @@ def render(report):
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------- budget
+
+HARNESS_WORKFLOWS = ("evaluate",)
+
+
+def load_caps(project_dir):
+    """(maxRunTokens, maxRunCostUsd) from config.json; None where unset or invalid."""
+    try:
+        harness = read_json(os.path.join(harness_dir(project_dir), "config.json"))["harness"]
+    except Exception:  # noqa: BLE001
+        return None, None
+
+    def positive(value, integer=False):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            return None
+        return int(value) if integer else float(value)
+
+    return positive(harness.get("maxRunTokens"), integer=True), positive(harness.get("maxRunCostUsd"))
+
+
+def budget_status(project_dir):
+    """Where the run stands against its caps.
+
+    `exceeded` lists the caps reached. `problems` lists caps that cannot be
+    enforced — a cost cap with no rates to price tokens by. A cap somebody set
+    that silently does nothing is worse than no cap, so a problem stops the run
+    the same way an exceeded cap does.
+    """
+    report = build_report(project_dir)
+    max_tokens, max_usd = load_caps(project_dir)
+    tokens, usd = report["total"]["totalTokens"], report["total"]["estimatedUsd"]
+    exceeded, problems = [], []
+    if max_tokens is not None and tokens >= max_tokens:
+        exceeded.append(f"{fmt_tokens(tokens)} tokens used, cap harness.maxRunTokens is {fmt_tokens(max_tokens)}")
+    if max_usd is not None:
+        if report["rates"] is None:
+            problems.append(
+                "harness.maxRunCostUsd is set but harness.costPerMTokUsd is not, so the run's cost "
+                "cannot be computed — set the rates, or cap tokens with harness.maxRunTokens instead"
+            )
+        elif usd is not None and usd >= max_usd:
+            exceeded.append(f"estimated ${usd:.2f} spent, cap harness.maxRunCostUsd is ${max_usd:.2f}")
+    return {
+        "tokens": tokens,
+        "estimatedUsd": usd,
+        "maxRunTokens": max_tokens,
+        "maxRunCostUsd": max_usd,
+        "exceeded": exceeded,
+        "problems": problems,
+    }
+
+
+def cmd_budget(args):
+    if not os.path.isdir(harness_dir(args.project_dir)):
+        print(f"ledger: {harness_dir(args.project_dir)} does not exist", file=sys.stderr)
+        return 1
+    status = budget_status(args.project_dir)
+    if args.json:
+        print(json.dumps(status, indent=2, ensure_ascii=False))
+    else:
+        if status["maxRunTokens"] is None and status["maxRunCostUsd"] is None:
+            print(f"No budget cap is set. {fmt_tokens(status['tokens'])} tokens used so far.")
+        if status["maxRunTokens"] is not None:
+            share = status["tokens"] / status["maxRunTokens"] * 100
+            print(f"Tokens: {fmt_tokens(status['tokens'])} of {fmt_tokens(status['maxRunTokens'])} ({share:.0f}%).")
+        if status["maxRunCostUsd"] is not None and status["estimatedUsd"] is not None:
+            share = status["estimatedUsd"] / status["maxRunCostUsd"] * 100
+            print(f"Estimated cost: ${status['estimatedUsd']:.2f} of ${status['maxRunCostUsd']:.2f} ({share:.0f}%).")
+        for line in status["exceeded"]:
+            print(f"BUDGET REACHED: {line}.")
+        for line in status["problems"]:
+            print(f"BUDGET NOT ENFORCEABLE: {line}.")
+    if status["exceeded"]:
+        return 3
+    return 1 if status["problems"] else 0
+
+
+def gated_target(event):
+    """The harness component a PreToolUse event is about to start, or None."""
+    tool = event.get("tool_name")
+    tool_input = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+    if tool == "Agent":
+        role = role_of(tool_input.get("subagent_type"))
+        return role if role != "other" else None
+    if tool == "Workflow":
+        name = tool_input.get("name")
+        if isinstance(name, str) and ":" in name:
+            plugin, leaf = name.rsplit(":", 1)
+            if plugin.startswith("crystal-harness") and leaf in HARNESS_WORKFLOWS:
+                return f"workflow {leaf}"
+    return None
+
+
+def cmd_gate(_args):
+    """Deny starting a harness agent or workflow once the run is over budget.
+
+    The stopping rules are stated to the orchestrator in prose; this makes the
+    budget one a guarantee. It fails open: a cost control that cannot evaluate
+    must not stop work the way an ownership guard must, so any error allows.
+    """
+    try:
+        event = json.load(sys.stdin)
+        if not isinstance(event, dict) or event.get("hook_event_name") != "PreToolUse":
+            return 0
+        project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or os.getcwd()
+        if not os.path.isfile(os.path.join(harness_dir(project_dir), "state.json")):
+            return 0
+        target = gated_target(event)
+        if target is None:
+            return 0
+        status = budget_status(project_dir)
+        reasons = status["exceeded"] + status["problems"]
+        if not reasons:
+            return 0
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    f"crystal-harness budget: not starting {target} — " + "; ".join(reasons) + ". "
+                    'Set phase to "blocked" with this as blockedReason and ask the human. '
+                    "Only a human raising or removing the cap in .harness/config.json lets the run continue."
+                ),
+            }
+        }))
+    except Exception:  # noqa: BLE001 - fail open
+        return 0
+    return 0
+
+
 def cmd_report(args):
     if not os.path.isdir(harness_dir(args.project_dir)):
         print(f"ledger: {harness_dir(args.project_dir)} does not exist", file=sys.stderr)
@@ -598,8 +732,15 @@ def main():
     p_report.add_argument("--json", action="store_true")
     p_report.add_argument("--project-dir", default=os.getcwd())
 
+    p_budget = sub.add_parser("budget", help="compare the run's total with its caps; exit 3 when one is reached")
+    p_budget.add_argument("--json", action="store_true")
+    p_budget.add_argument("--project-dir", default=os.getcwd())
+
+    sub.add_parser("gate", help="PreToolUse hook on Agent|Workflow; reads the event on stdin")
+
     args = parser.parse_args()
-    return {"hook": cmd_hook, "append": cmd_append, "report": cmd_report}[args.command](args)
+    commands = {"hook": cmd_hook, "append": cmd_append, "report": cmd_report, "budget": cmd_budget, "gate": cmd_gate}
+    return commands[args.command](args)
 
 
 if __name__ == "__main__":

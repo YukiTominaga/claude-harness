@@ -29,7 +29,9 @@ import json
 import os
 import sys
 
-PROTECTED_LEAVES = ("qa.md", "verdict.json", "screenshots")
+# `lenses/` holds the per-lens verdicts of a parallel evaluation and the
+# reproduction results — verdicts in every sense that matters.
+PROTECTED_LEAVES = ("qa.md", "verdict.json", "screenshots", "lenses")
 ORCHESTRATOR_LEAVES = ("state.json", "handoff.md", "journal.md", "config.json", "spec.md", "ledger.jsonl")
 GUARDED_ROLES = ("harness-generator", "harness-evaluator")
 
@@ -49,7 +51,13 @@ def role_of(agent_type):
     leaf = agent_type.rsplit(":", 1)[-1]
     return leaf if leaf in GUARDED_ROLES else ""
 CODEX_REVIEW_LEAF = "codex-review.md"
-EVALUATOR_READ_ONLY_LEAVES = ("report.md", CODEX_REVIEW_LEAF)
+# Written by the orchestrating command with scripts/test_changes.py, before the
+# evaluator is spawned: what the round did to the project's tests. Like the
+# codex review it is evidence neither agent may author — the generator would be
+# reporting on its own test deletions, the evaluator editing what it must weigh.
+TEST_CHANGES_LEAF = "test-changes.json"
+COMMISSIONED_LEAVES = (CODEX_REVIEW_LEAF, TEST_CHANGES_LEAF)
+EVALUATOR_READ_ONLY_LEAVES = ("report.md",) + COMMISSIONED_LEAVES
 
 
 def allow():
@@ -106,7 +114,7 @@ def project_relative(target, real_cwd):
 
 
 def is_verdict_artifact(parts):
-    """.harness/{sprints,final}/NN/{qa.md,verdict.json,screenshots/...}"""
+    """.harness/{sprints,final}/NN/{qa.md,verdict.json,screenshots/...,lenses/...}"""
     return (
         len(parts) >= 4
         and parts[0] == ".harness"
@@ -115,13 +123,13 @@ def is_verdict_artifact(parts):
     )
 
 
-def is_codex_review(parts):
-    """.harness/{sprints,final}/NN/codex-review.md"""
+def is_commissioned(parts):
+    """.harness/{sprints,final}/NN/{codex-review.md,test-changes.json}"""
     return (
         len(parts) == 4
         and parts[0] == ".harness"
         and parts[1] in ("sprints", "final")
-        and parts[3] == CODEX_REVIEW_LEAF
+        and parts[3] in COMMISSIONED_LEAVES
     )
 
 
@@ -175,18 +183,21 @@ def main():
             allow()
         command = tool_input.get("command")
         lowered = command.casefold() if isinstance(command, str) else ""
-        if "verdict.json" in lowered or "qa.md" in lowered:
+        # "lenses/" alone could be the application's own directory, so it only
+        # counts alongside the harness directory.
+        if "verdict.json" in lowered or "qa.md" in lowered or (".harness" in lowered and "lenses/" in lowered):
             deny(
                 "harness-generator may not touch verdict artifacts through the "
                 "shell. Only harness-evaluator produces verdicts; read them with "
                 "Read if you are revising."
             )
-        if CODEX_REVIEW_LEAF in lowered:
-            deny(
-                f"harness-generator may not touch {CODEX_REVIEW_LEAF} through the "
-                "shell. The orchestrating command commissions the independent "
-                "review; read it with Read if you need it."
-            )
+        for leaf in COMMISSIONED_LEAVES:
+            if leaf in lowered:
+                deny(
+                    f"harness-generator may not touch {leaf} through the shell. The "
+                    "orchestrating command commissions it as independent evidence "
+                    "about your diff; read it with Read if you need it."
+                )
         for leaf in ("state.json", "handoff.md", "journal.md", "ledger.jsonl"):
             if leaf in lowered:
                 deny(
@@ -214,11 +225,11 @@ def main():
                 "produces verdicts. Report what you built in report.md; the verdict is "
                 "not yours to write."
             )
-        if is_codex_review(parts):
+        if is_commissioned(parts):
             deny(
-                f"harness-generator may not write {rel}. It is an independent review "
-                "of your own diff, commissioned by the orchestrating command. Writing "
-                "it yourself would make the second opinion your own. Read it if you "
+                f"harness-generator may not write {rel}. It is independent evidence "
+                "about your own diff, commissioned by the orchestrating command. Writing "
+                "it yourself would make that evidence your own. Read it if you "
                 "are revising."
             )
         if is_orchestrator_file(parts):
@@ -232,9 +243,9 @@ def main():
         deny(
             f"harness-evaluator may not write {rel}. The evaluator writes only its "
             "round artifacts under .harness/sprints/NN/ or .harness/final/NN/ "
-            "(qa.md, verdict.json, screenshots, the contract review block) and "
+            "(qa.md, verdict.json, screenshots, lenses/, the contract review block) and "
             ".harness/artifacts/. It does not edit what it grades and does not "
-            "write report.md, codex-review.md, or the run state. Record defects as "
+            "write report.md, codex-review.md, test-changes.json, or the run state. Record defects as "
             "blocking issues in qa.md instead."
         )
 

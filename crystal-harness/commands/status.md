@@ -66,6 +66,11 @@ holes in it is still evidence; a ledger whose holes were hidden is not.
 If it says the ledger is empty, say so — the strip decisions in the README are not
 answerable without it.
 
+Then run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" budget` and print its
+lines too: how much of `harness.maxRunTokens` / `harness.maxRunCostUsd` is used, or
+that no cap is set. If it reports a cap reached or not enforceable, say that a hook
+is refusing to start harness agents until a human changes the cap.
+
 ## Open blocking issues
 
 From the latest verdict: `overall`, the verification mode, and the criterion counts

@@ -445,6 +445,100 @@ def test_report_rates_legacy_and_damage():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def run_gate(root, event, raw=None):
+    proc = subprocess.run(
+        ["python3", LEDGER, "gate"],
+        input=raw if raw is not None else json.dumps(event),
+        capture_output=True, text=True, env=hook_env(root, 0), cwd=root,
+    )
+    decision = None
+    if proc.stdout.strip():
+        decision = json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"]
+    return proc, decision
+
+
+def spawn_event(root, tool, **tool_input):
+    return {"hook_event_name": "PreToolUse", "cwd": root, "tool_name": tool, "tool_input": tool_input}
+
+
+def run_budget(root):
+    return subprocess.run(["python3", LEDGER, "budget", "--project-dir", root], capture_output=True, text=True)
+
+
+def set_config(root, **harness):
+    with open(os.path.join(root, ".harness", "config.json"), "w", encoding="utf-8") as f:
+        json.dump({"harness": harness}, f)
+
+
+def test_budget_and_gate():
+    root = new_project(STATE, {"harness": {}})
+    try:
+        t = os.path.join(root, "t", "subagents", "agent-g.jsonl")
+        write_transcript(t, [assistant("m", "2026-11-20T04:00:00.000Z", usage(100_000, 50_000, 0, 850_000))])
+        run_hook(root, stop_event(root, "crystal-harness:harness-generator", "g", t))  # 1,000,000 tokens
+
+        gen = spawn_event(root, "Agent", subagent_type="crystal-harness:harness-generator", prompt="build")
+        wf = spawn_event(root, "Workflow", name="crystal-harness:evaluate")
+
+        proc = run_budget(root)
+        check("no cap: budget exits 0 and says so", proc.returncode == 0 and "No budget cap" in proc.stdout, proc.stdout)
+        check("no cap: gate allows", run_gate(root, gen)[1] is None)
+
+        set_config(root, maxRunTokens=2_000_000)
+        proc = run_budget(root)
+        check("under the token cap: exit 0 with the share", proc.returncode == 0 and "(50%)" in proc.stdout, proc.stdout)
+        check("under the token cap: gate allows", run_gate(root, gen)[1] is None)
+
+        set_config(root, maxRunTokens=1_000_000)
+        proc = run_budget(root)
+        check("at the token cap: budget exits 3", proc.returncode == 3 and "BUDGET REACHED" in proc.stdout, proc.stdout)
+        proc, decision = run_gate(root, gen)
+        check("at the token cap: gate denies a harness agent", decision == "deny" and proc.returncode == 0, proc.stdout)
+        check("at the token cap: gate denies the evaluate workflow", run_gate(root, wf)[1] == "deny")
+        check(
+            "the bare role name is gated too",
+            run_gate(root, spawn_event(root, "Agent", subagent_type="harness-evaluator"))[1] == "deny",
+        )
+        check(
+            "an unrelated agent is never gated",
+            run_gate(root, spawn_event(root, "Agent", subagent_type="Explore"))[1] is None,
+        )
+        check(
+            "someone else's workflow is never gated",
+            run_gate(root, spawn_event(root, "Workflow", name="evaluate"))[1] is None
+            and run_gate(root, spawn_event(root, "Workflow", name="other-plugin:evaluate"))[1] is None,
+        )
+        check("other tools are never gated", run_gate(root, spawn_event(root, "Bash", command="npm test"))[1] is None)
+        proc, decision = run_gate(root, None, raw="not json")
+        check("gate fails open on a malformed event", proc.returncode == 0 and decision is None)
+
+        rates = {"input": 10, "output": 50, "cacheWrite": 12.5, "cacheRead": 1}  # -> $4.35
+        set_config(root, maxRunCostUsd=5, costPerMTokUsd=rates)
+        proc = run_budget(root)
+        check("under the cost cap: exit 0", proc.returncode == 0 and "$4.35 of $5.00" in proc.stdout, proc.stdout)
+        set_config(root, maxRunCostUsd=4, costPerMTokUsd=rates)
+        check("over the cost cap: budget exits 3 and gate denies", run_budget(root).returncode == 3 and run_gate(root, gen)[1] == "deny")
+
+        set_config(root, maxRunCostUsd=4)
+        proc = run_budget(root)
+        check(
+            "a cost cap with no rates is reported as unenforceable, not ignored",
+            proc.returncode == 1 and "NOT ENFORCEABLE" in proc.stdout and run_gate(root, gen)[1] == "deny",
+            proc.stdout,
+        )
+        set_config(root, maxRunTokens=0, maxRunCostUsd=-1)
+        check("zero and negative caps are treated as unset", run_budget(root).returncode == 0)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    bare = tempfile.mkdtemp(prefix="ledger-test-bare-")
+    try:
+        gen = spawn_event(bare, "Agent", subagent_type="crystal-harness:harness-generator")
+        check("gate does nothing outside a harness run", run_gate(bare, gen)[1] is None)
+    finally:
+        shutil.rmtree(bare, ignore_errors=True)
+
+
 def test_report_empty():
     root = new_project(STATE)
     try:
@@ -469,6 +563,7 @@ def main():
         test_report_supersedes_snapshots,
         test_append_and_external_rows,
         test_report_rates_legacy_and_damage,
+        test_budget_and_gate,
         test_report_empty,
     ):
         test()
