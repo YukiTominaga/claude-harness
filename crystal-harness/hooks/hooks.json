@@ -23,6 +23,17 @@
             "statusMessage": "Checking harness artifact ownership"
           }
         ]
+      },
+      {
+        "matcher": "Agent|Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py\" gate",
+            "timeout": 15,
+            "statusMessage": "Checking the harness budget"
+          }
+        ]
       }
     ],
     "SubagentStop": [

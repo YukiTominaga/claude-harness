@@ -23,6 +23,8 @@ Modeled on Anthropic's
 | **Passing sprints, failing product** | Ten sprints pass; the app doesn't hold together. | A **final assessment** graded against `spec.md` with criteria nobody negotiated. The run is not finished until it passes. |
 | **A grader with the author's priors** | Generation and evaluation are separate agents, but still the same model family reading a diff that family wrote. | An optional independent review of each diff by a non-Claude model (the `codex` plugin), recorded as evidence the evaluator must confirm against the code — never as a gate. |
 | **QA too slow to run** | Browser verification dominates the cost of a round, so it gets skipped informally and nobody records that it was. | Browser verification is a config flag with **three recorded modes**. A round that skipped it says so in the verdict, and a round that wanted it and did not get it can never pass. |
+| **Tests that vouch for themselves** | The evaluator leans on the project's test suite, and the generator wrote it. A failing test deleted or skipped never shows up as a red suite. | A script reports what each round did to the tests before the evaluator runs. If the suite was weakened, no earlier pass may be carried on its strength, and the verdict validator enforces that. |
+| **A run with no ceiling** | Rounds keep going because each one looks like it might be the last. | Optional token and cost caps, checked from the ledger. When one is reached the loop stops and asks, and a hook refuses to start another harness agent until a human raises it. |
 
 ## Install
 
@@ -52,8 +54,9 @@ Restart Claude Code. Or, for a throwaway trial without installing:
 claude --plugin-dir /absolute/path/to/claude-harness/crystal-harness
 ```
 
-Verify — the inventory should show 3 agents, 1 MCP server, 3 hooks, and 9 skills (the
-six commands are counted as skills alongside the three reference skills):
+Verify — the inventory should show 3 agents, 1 MCP server, 3 hooks, and 10 skills (the
+six commands are counted as skills alongside the four reference skills), plus the
+`evaluate` workflow:
 
 ```bash
 claude plugin details crystal-harness
@@ -129,15 +132,19 @@ agent's conversation.
 ├── sprints/01/
 │   ├── contract.md      # generator proposes, evaluator accepts
 │   ├── report.md        # generator's completion report + self-check
-│   ├── codex-review.md  # independent review of the diff, if codex is installed
-│   ├── qa.md            # evaluator verdict, human-readable
-│   ├── verdict.json     # evaluator verdict, machine-readable
+│   ├── codex-review.md  # independent review of the diff (when codex is installed)
+│   ├── test-changes.json # what the round did to the tests, from a script
+│   ├── lenses/          # parallel evaluation only: one verdict per lens
+│   ├── qa.md            # the round's verdict, human-readable
+│   ├── verdict.json     # the round's verdict, machine-readable
 │   └── screenshots/
-└── final/01/            # end-of-run assessment, one directory per round
+└── final/01/            # the end-of-run assessment, one directory per round
     ├── qa.md
     ├── verdict.json
     ├── report.md
     ├── codex-review.md
+    ├── test-changes.json
+    ├── lenses/
     └── screenshots/
 ```
 
@@ -194,9 +201,13 @@ things it blocks silently destroys the design:
   self-awarded.
 - `harness-evaluator` writing anything outside `.harness/` — if the evaluator can fix
   what it grades, it is the author of what it judges.
-- **Either of them** writing `codex-review.md` — the one file both are blocked from.
-  A generator that can write it manufactures its own second opinion; an evaluator
-  that can write it edits the evidence it is about to cite.
+- **Either of them** writing `codex-review.md` or `test-changes.json` — the files
+  both are blocked from. Each is evidence about the generator's diff, commissioned
+  before the evaluator exists. A generator that can write one manufactures its own
+  second opinion, or its own report on the tests it deleted; an evaluator that can
+  write one edits the evidence it is about to cite.
+- `harness-generator` writing anything under a round's `lenses/` — in parallel
+  evaluation those files are the verdicts.
 
 The same hook keeps both of them out of the orchestrator's files — `state.json`,
 `handoff.md`, `journal.md`, `config.json`, `spec.md` — and out of `ledger.jsonl`:
@@ -260,10 +271,14 @@ from `hooks/hooks.json` (python3 is assumed to be present).
     "contextReset": true,             // false → keep one agent across phases
     "browserVerification": false,     // true → drive the UI with Playwright
     "codexReview": "auto",            // "auto" | true | false
+    "parallelEvaluation": false,      // true → one evaluator per lens, merged by a script
+    "reproduceBlockingIssues": true,  // parallel evaluation only: re-try each blocking issue
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxAcceptanceCriteria": 20,      // cap per sprint contract, enforced by validate_contract.py
     "maxFinalQaRounds": 5,
+    "maxRunTokens": null,             // stop and ask once agents have used this many tokens
+    "maxRunCostUsd": null,            // … or cost this much (needs costPerMTokUsd)
     "costPerMTokUsd": null            // {input, output, cacheWrite, cacheRead} in USD per MTok
                                       // → estimated $ in /crystal-harness:status
   }
@@ -454,6 +469,88 @@ One thing the flag does *not* save: the plugin still registers Playwright MCP in
 no conditionals. The saving is in the round — the evaluator's browser round-trips
 are what the time goes on, not the server's startup.
 
+### What the round did to the tests
+
+The evaluator leans on the project's test suite twice. A failing suite is
+conclusive, and on a re-check round a passing suite is what lets a criterion that
+passed before be *carried* instead of verified again. But the generator writes
+that suite, so it has a way to pass without being correct: delete the failing
+test, skip it, or point the test command somewhere that always succeeds. None of
+that turns the suite red.
+
+Before any evaluator runs, `scripts/test_changes.py` reads the round's diff and
+writes `test-changes.json` into the round directory: test files added, changed and
+deleted, test cases removed, skip and `.only` markers added, a changed
+`scripts.test` in `package.json`, and one flag — `weakened`. The evaluator reads it
+before relying on the suite and treats an unjustified removal as a blocking issue.
+
+The part that does not depend on anyone's judgement: when the report says
+`weakened`, `validate_verdict.py --test-changes` rejects any verdict that carries a
+pass from an earlier round. The whole round is verified afresh. The signal is
+deliberately conservative — a legitimate refactor can trip it — because a false
+alarm costs one fully verified round and a miss costs a pass nobody earned.
+
+Like the codex review, neither agent may write the file; the guard blocks both.
+
+### Parallel evaluation
+
+Off by default (`parallelEvaluation: false`). When on, a round is graded by one
+`harness-evaluator` per **lens** instead of one evaluator doing everything:
+
+| Lens | Does | Scores |
+| --- | --- | --- |
+| `tests` | builds, runs the suite, checks `test-changes.json` | — |
+| `api` | drives the API and reads the datastore; owns the criteria when there is no browser | product depth, functionality |
+| `screen` | drives the interface with Playwright; exists only with `browserVerification: true`, and then owns the criteria | product depth, functionality, design, originality, craft |
+| `code` | reads the diff and `codex-review.md` | code quality |
+
+The plugin's `evaluate` workflow runs them: `code` alongside `tests` → `api` →
+`screen`. The lenses that run the application go one after another on purpose —
+they share its ports and its datastore, and an empty-state check that fails because
+another lens just created a record is a false failure. So this mode buys focus and
+a second look more than wall-clock time, and it costs more agents per round.
+
+No model merges the results. Each lens writes its own verdict file under the
+round's `lenses/` directory, and `scripts/merge_verdicts.py` produces the round's
+`verdict.json` and `qa.md` by rules that can only be stricter than the parts:
+
+- a dimension two lenses both score takes the **lower** score;
+- every blocking issue from every lens is kept;
+- the round passes only if **every** lens passed its own slice;
+- if a lens is missing, malformed, self-contradictory, or stamped with another
+  round or commit, there is **no verdict** — the script exits 2 and writes nothing.
+
+The last rule is the same one `degraded` mode applies to a missing browser: a round
+that measured less than it was configured to must not read as a verdict.
+
+With `reproduceBlockingIssues: true`, the workflow then hands each blocking issue
+to one more fresh evaluator that gets only the reproduction steps and the expected
+behaviour — not the lens's notes and not the cause — and records on the issue
+whether it saw the same failure. This is an annotation, not a filter: an issue
+nobody could reproduce stays blocking and the round still fails. What changes is
+the stopping rule — if the generator cannot reproduce it either, that is two
+independent failures to reproduce, and the loop asks a human instead of spending a
+second revision on it.
+
+It is off by default for the reason every other default here has: there is no
+measurement yet of what the lenses find that a single evaluator misses. Each lens
+and each reproduction is its own ledger entry, so one run with it on and one with
+it off, against the same spec, is the comparison that would justify the cost.
+
+### Budget
+
+`maxRunTokens` and `maxRunCostUsd` cap what a run may spend on agents, as counted by
+the ledger. The orchestrator checks before every spawn (`ledger.py budget`) and
+stops to ask when a cap is reached. Because a stopping rule stated only in prose is
+a rule that gets skipped, a `PreToolUse` hook makes it a guarantee: once a cap is
+reached it denies starting any harness agent or the `evaluate` workflow, and only a
+human editing the cap in `config.json` lifts it.
+
+A cost cap needs prices. `maxRunCostUsd` with no `costPerMTokUsd` is reported as
+unenforceable and stops the run — a cap somebody set that silently does nothing is
+worse than no cap. The hook itself fails open: it is a cost control, not an
+ownership boundary, so an error in it never blocks work.
+
 ### Independent review
 
 When the [`codex`](https://github.com/openai/codex-plugin-cc) plugin is installed
@@ -565,6 +662,14 @@ contract are not compensating for a model weakness. They are how a run survives 
 crash, a `/clear`, a new session, and a different machine. That does not expire with
 context length.
 
+**Parallel evaluation — not on yet, and the evidence decides.** It is the one
+component here that was added rather than waiting to be stripped, so it ships off.
+*Signal to turn it on:* a single evaluator's rounds keep missing defects that a
+later round or a human finds in one specific area — the API surface, the tests,
+the code. *Signal to turn it back off:* the ledger shows the lenses costing a
+multiple of a single evaluator while the merged verdicts match what the single
+evaluator returned on the same build.
+
 **7. The rubric — keep it, and keep re-calibrating it.** What expires is the
 calibration, not the mechanism: as baseline output quality rises, a 3 on Originality
 that was defensible becomes a 2. Re-read `calibration-examples.md` against your own
@@ -602,15 +707,19 @@ crystal-harness/
 ├── commands/{init,plan,build,qa,resume,status}.md
 ├── skills/
 │   ├── harness-protocol/SKILL.md        # .harness/ contract, both JSON Schemas, handoff template, ledger
+│   ├── evaluation-lenses/SKILL.md       # the four lenses, the lens verdict file, reproducing an issue
 │   ├── sprint-contract/SKILL.md         # pinned interfaces and testable acceptance criteria
 │   └── qa-rubric/
 │       ├── SKILL.md                     # six dimensions, anchors, thresholds, verdict.json schema
 │       └── references/calibration-examples.md
+├── workflows/evaluate.js                # parallel evaluation: one evaluator per lens, then reproductions
 ├── hooks/hooks.json
 ├── scripts/
 │   ├── guard_harness_artifacts.py       # the ownership policy the PreToolUse hook runs
 │   ├── inject_harness_context.py        # SessionStart notice when a run exists here
-│   ├── ledger.py                        # cost ledger: SubagentStop hook, codex append, report
+│   ├── ledger.py                        # cost ledger: SubagentStop hook, codex append, report, budget gate
+│   ├── test_changes.py                  # what a round did to the tests: deleted, skipped, re-pointed
+│   ├── merge_verdicts.py                # lens verdicts → one verdict.json + qa.md, or no verdict at all
 │   ├── validate_verdict.py              # verdict.json schema + what a pass may mean per mode
 │   ├── validate_contract.py             # contract.md criterion cap, scope size, id integrity
 │   ├── codex_review.py                  # find the codex plugin, review the diff, write codex-review.md
@@ -618,7 +727,9 @@ crystal-harness/
 │   ├── test_validate_verdict.py
 │   ├── test_validate_contract.py
 │   ├── test_codex_review.py
-│   └── test_ledger.py
+│   ├── test_ledger.py
+│   ├── test_test_changes.py
+│   └── test_merge_verdicts.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -635,17 +746,20 @@ python3 crystal-harness/scripts/test_validate_verdict.py
 python3 crystal-harness/scripts/test_validate_contract.py
 python3 crystal-harness/scripts/test_codex_review.py
 python3 crystal-harness/scripts/test_ledger.py
+python3 crystal-harness/scripts/test_test_changes.py
+python3 crystal-harness/scripts/test_merge_verdicts.py
 ```
 
 No framework and no dependencies.
 
-**56 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
+**66 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
 Code actually sends, both denial policies, the `codex-review.md`
-row that denies both agents, the cost ledger, both escape routes (`..` traversal and a symlink
+and `test-changes.json` rows that deny both agents, the lens files, the cost ledger, both escape routes (`..` traversal and a symlink
 planted inside `.harness/`), case-folding, the Bash path, every legitimate write,
 and both fail-closed paths.
 
-**33 cases over the verdict validator**: the schema, and every rule about what a
+**50 cases over the verdict validator**: the schema, the rule that a weakened test
+suite voids every carried pass, and every rule about what a
 `pass` may mean in each verification mode — the three dimensions headless must
 leave `null`, the conditions a headless pass has to buy that waiver with, the
 thresholds themselves, and the fact that a degraded round never passes.
@@ -662,15 +776,28 @@ default and a configured value, missing or empty sections, duplicate ids, the 3�
 scope range, fenced examples not being counted, and an amendment or revision note
 that references an id the contract does not have.
 
-**54 cases over the cost ledger**: usage summed across every request rather than
+**21 cases over the test-change report**: each way of thinning a suite (a deleted
+file, a removed case, a skip, an `.only`, an `xfail`, a re-pointed or removed test
+command, a test renamed out of the test tree) and each legitimate change that must
+not raise the alarm.
+
+**46 cases over the verdict merge**: the lower of two scores standing, every issue
+kept, one failing lens failing the round, a reproduction result annotating but
+never removing an issue — and twenty-odd ways of refusing to merge at all, from a
+missing lens to one that graded a different commit.
+
+**71 cases over the cost ledger**: usage summed across every request rather than
 the last, a final response that reaches the transcript after the hook has started
 still being counted, a streamed response counted once, a re-stopped agent's snapshot
 superseding rather than adding, the hook exiting 0 on every malformed input while
 recording an unreadable transcript as `null` rather than zero, per-category
-pricing, and entries from a pre-0.10.0 `state.json` kept out of token totals.
+pricing, entries from a pre-0.10.0 `state.json` kept out of token totals, and the budget
+caps with the hook that enforces them.
 
-These five are tested and the prompts are not, because these five fail
-*silently*. If the ledger stops recording, or double-counts, the table still
+These seven are tested and the prompts are not, because these seven fail
+*silently*. If the test-change report stops noticing a deleted test, the suite
+goes back to vouching for itself. If the merge turns lenient, a round that
+measured less than it claims reads as a pass. If the ledger stops recording, or double-counts, the table still
 looks plausible and every strip decision is made on it. If the contract validator stops rejecting, contracts drift back past
 the cap and every phase of the run gets slower and costlier. If the guard stops denying, the harness keeps running and every verdict
 becomes self-awarded. If the validator stops rejecting, a round that measured

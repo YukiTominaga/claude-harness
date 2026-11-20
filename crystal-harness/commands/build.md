@@ -1,7 +1,7 @@
 ---
 description: Run the harness build loop — sprint contracts, implementation, context resets, evaluation, revision, and the end-of-run final assessment — until the spec is built or the loop escalates to you.
 argument-hint: "[max-sprints]"
-allowed-tools: Read, Write, Bash, Glob, Grep, Skill, Agent
+allowed-tools: Read, Write, Bash, Glob, Grep, Skill, Agent, Workflow
 ---
 
 You are the **orchestrator**. You do not write application code and you do not grade.
@@ -30,14 +30,18 @@ they decided, set `phase` back to the value implied by the current state, clear
 should normally be cleared only alongside a change the human made — say so if the
 working tree is unchanged since the block.
 
-## Spawn exactly one subagent at a time
+## One builder at a time; evaluation may fan out
 
-Each step below spawns one agent and waits for it. Never fan out: two generators on
-the same working tree collide, and a second evaluator grading the same round produces
-a verdict nobody asked for. Current models delegate readily and will suggest parallel
-work — the sequence here is the design, not a limitation to route around. The only
-concurrency in this harness is that a subagent may use its own tools in parallel
-internally.
+Each build, contract and revision step below spawns one agent and waits for it.
+Never fan those out: two generators on the same working tree collide. Current
+models delegate readily and will suggest parallel work — for building, the sequence
+here is the design, not a limitation to route around.
+
+Evaluation is different, because evaluators do not write source. When
+`harness.parallelEvaluation` is `true`, a QA round is graded by one evaluator per
+lens, run by the plugin's `evaluate` workflow — see "Parallel evaluation" below.
+When it is `false` (the default) a round has exactly one evaluator, and a second
+one grading the same round would produce a verdict nobody asked for.
 
 ## The ledger records itself — keep `state.json` ahead of it
 
@@ -62,6 +66,25 @@ when the agent finishes (see `harness-protocol`). Two things are still yours:
 This is not bookkeeping. The recurring judgement this harness exists to support is
 *is this component still worth its cost*, and the ledger is the only place that
 question can be answered from evidence rather than impression.
+
+## The budget
+
+`harness.maxRunTokens` and `harness.maxRunCostUsd` cap what the run may spend on
+agents. Before **every** spawn — an agent or the `evaluate` workflow — run
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" budget
+```
+
+Exit 0: carry on. Exit 3 (a cap is reached) or exit 1 with `BUDGET NOT
+ENFORCEABLE` (a cost cap is set but there are no rates to price tokens by): stop,
+set `phase: "blocked"` with the printed lines as `blockedReason`, journal it, and
+ask the human. Do not finish "just this round" first.
+
+A `PreToolUse` hook enforces the same check: once a cap is reached it denies
+starting any harness agent or the `evaluate` workflow. If you see that denial you
+skipped the check above; do what it says. Only the human raising or removing the
+cap in `config.json` lets the run continue — never edit the cap yourself.
 
 ## The codex review step
 
@@ -116,6 +139,94 @@ Do not read `codex-review.md` yourself, do not summarise it to the evaluator, an
 do not act on its findings. It is the evaluator's input. An orchestrator that
 relays review findings into the generator has just made the generator revise
 against an ungraded opinion.
+
+## The test-changes step
+
+The evaluator leans on the project's test suite, and the generator wrote it. So
+before any evaluator is spawned, in every round and in both evaluation modes,
+record what the round did to the tests:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/test_changes.py" \
+  --base <the commit the round started from> \
+  --out .harness/sprints/NN/test-changes.json
+```
+
+The base is the same commit you gave the codex review. Exit 0 means the report was
+written — whether or not it says `weakened`; journal a weakened report in one line
+and carry on, because judging it is the evaluator's job, not yours. Exit 1 means
+git could not produce the diff: the script has removed any earlier report, so say
+one line about it and continue without one.
+
+Like `codex-review.md`, this file is evidence about the generator's diff that
+neither agent may write, and you do not summarise it to anyone. Its consequence is
+enforced where it matters: whenever the file exists, validate the round's verdict
+with `--test-changes` (below), which rejects a pass carried from an earlier round
+on the strength of a suite this round weakened.
+
+## Parallel evaluation
+
+When `harness.parallelEvaluation` is `true`, the "evaluate" step of a sprint round
+and of a final round is this procedure instead of a single evaluator. Everything
+before it (context reset, codex review, test changes) and after it (validating the
+verdict, summarising it into `state.json`, branching) is unchanged.
+
+1. **Clear the lens directory**: `rm -rf <round dir>/lenses`. A lens file left from
+   the previous round in the same directory must not be there to be read as this
+   one's. (The merge also checks every file's round and commit, so this is the
+   belt, not the braces.)
+2. **Start the plugin's `evaluate` workflow** with the Workflow tool, by name
+   (`crystal-harness:evaluate`), passing `args` as a JSON object:
+
+   ```json
+   {
+     "roundDir": ".harness/final/02",
+     "phase": "final",
+     "sprint": null,
+     "round": 2,
+     "commit": "<git rev-parse HEAD>",
+     "browser": false,
+     "reproduce": true,
+     "recheck": { "previousCommit": "<commit the previous round graded>",
+                  "previousRoundDir": ".harness/final/01" }
+   }
+   ```
+
+   - `phase` is `"sprint"` or `"final"`; `sprint` is the sprint index, or `null`.
+   - `round` is the number the verdict will carry — the same value you pass to
+     the merge in step 4.
+   - `browser` is `harness.browserVerification`; `reproduce` is
+     `harness.reproduceBlockingIssues` (default `true`).
+   - `recheck` is `null` on a first evaluation. On a re-check give
+     `previousCommit`, and `previousRoundDir` only in a final assessment — in a
+     sprint the previous verdict is still in the round directory.
+
+   The workflow runs the `code` lens alongside `tests` → `api` → (`screen` when
+   the browser is enabled), each a fresh `harness-evaluator`, then has one more
+   fresh evaluator per blocking issue try to reproduce it from its steps alone.
+   The lenses that run the application go one after another because they share
+   its ports and datastore; do not ask for more parallelism than that.
+3. **Wait for the workflow to complete.** It runs in the background and you are
+   notified; do nothing else to the round meanwhile. Its result is a summary, not a
+   verdict — do not act on it.
+4. **Merge**:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/merge_verdicts.py" <round dir> --round <n>
+   ```
+
+   Exit 0: `verdict.json` and `qa.md` are written. Exit 2: nothing was written, and
+   it printed why — a lens is missing, malformed, self-contradictory or stale.
+   Relaunch the workflow **once** with `resumeFromRunId` and the same args, so the
+   lenses that finished return their cached results and only the missing one runs
+   again, then merge again. A second exit 2 is an escalation: set
+   `phase: "blocked"` with the printed reasons. Never write or patch a lens file or
+   `verdict.json` yourself, and never treat a round that did not merge as a fail.
+5. Continue with validation exactly as for a single evaluator.
+
+Each lens and each reproduction is a ledger entry of its own, so `ledger.py report`
+shows what this mode costs next to what it found. That comparison — against a run
+with `parallelEvaluation: false` — is the evidence for keeping it on.
 
 ## Mode selection
 
@@ -195,10 +306,12 @@ If it reports a failing build or failing tests it could not fix, do not proceed 
 evaluation — that spends a whole cycle re-discovering a known fact. Go straight to
 revision, or escalate if revisions are exhausted.
 
-### 4. Codex review
+### 4. Codex review and test changes
 
 Run the codex review step described above against the sprint's diff, writing
-`.harness/sprints/NN/codex-review.md`. Skip it on exit 3 and carry on.
+`.harness/sprints/NN/codex-review.md`. Skip it on exit 3 and carry on. Then run the
+test-changes step against the same base, writing
+`.harness/sprints/NN/test-changes.json`.
 
 ### 5. Context reset — mandatory
 
@@ -221,6 +334,9 @@ still written, because it is what makes the run resumable.
 
 ### 6. Evaluate
 
+If `harness.parallelEvaluation` is `true`, run "Parallel evaluation" above for this
+round and skip to validating the verdict. Otherwise:
+
 Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the contract,
 `report.md`, and the sprint directory. It reads `harness.browserVerification` to
 decide its verification mode, exercises the app through that mode — the browser via
@@ -240,14 +356,21 @@ Validate the verdict with the plugin's checker — do not eyeball it against the
 schema yourself:
 
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_verdict.py" .harness/sprints/NN/verdict.json
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_verdict.py" .harness/sprints/NN/verdict.json \
+  --test-changes .harness/sprints/NN/test-changes.json
 ```
 
-It checks the full `qa-rubric` schema plus the consistency rules: a pass with
+Leave `--test-changes` off only when the test-changes step wrote no file. The
+script checks the full `qa-rubric` schema plus the consistency rules: a pass with
 blocking issues, failed criteria, a below-threshold score, or a `degraded` mode is
-a contradiction, and a `headless` pass has to meet the extra conditions the rubric
-sets for one. If it prints violations, send the verdict back once for correction
-with that exact list; a malformed verdict must not be interpreted generously.
+a contradiction; a `headless` pass has to meet the extra conditions the rubric
+sets for one; and when the round weakened its tests, a pass carried from an
+earlier round is rejected. If it prints violations, send the verdict back once
+for correction with that exact list; a malformed verdict must not be interpreted
+generously. In parallel evaluation there is no single evaluator to send it back
+to: relaunch the workflow once with the violation list added to its args as
+`"correction": "<the exact list>"`, merge again, and escalate if it is still
+rejected.
 
 Append the round to the sprint's `verdicts` array in `state.json` so the trend is
 visible later, copying `environment.verificationMode` into the summary along with
@@ -267,7 +390,9 @@ blocking issue id, increment `repeatedIssueFingerprints[id]`; drop ids that did 
 recur.
 
 Then spawn a **fresh `harness-generator`** with `verdict.json` and the instruction to
-work the **blocking issues only**. When an issue is at recurrence ≥ 2, instruct it
+work the **blocking issues only**. Give it the file, not your reading of it — in
+particular do not drop an issue marked `verification: "not_reproduced"`; whether a
+defect is real is not yours to decide. When an issue is at recurrence ≥ 2, instruct it
 explicitly that a patch has already failed and it must change approach — for Design,
 Originality and Product depth issues, that means replacing the approach, not refining
 it. Return to step 4 — a revision gets its own codex review, because the diff it
@@ -291,7 +416,10 @@ whenever any of these holds:
   asked for a browser.
 - `maxSprints` reached — note this stops the sprint loop, and ask whether to run the
   final assessment on what exists.
-- The generator reports a blocking issue it could not reproduce twice in a row.
+- The generator reports a blocking issue it could not reproduce twice in a row —
+  or once, when the verdict already marked that issue `not_reproduced`. Two
+  independent failures to reproduce mean the report, not the code, needs a human.
+- `ledger.py budget` exits 3 or 1 (see "The budget").
 
 When you escalate, print: the sprint, the six scores per round,
 the blocking issues in order with their repro steps and causes, what was tried across
@@ -315,15 +443,19 @@ For round `NN` starting at 01:
 2. Run the codex review step against this round's diff, writing
    `.harness/final/NN/codex-review.md`. On round 01 in v2 mode the base is the
    commit the single build started from; on later rounds it is the previous
-   round's `commit`.
-3. Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the running
+   round's `commit`. Then run the test-changes step against the same base,
+   writing `.harness/final/NN/test-changes.json`.
+3. If `harness.parallelEvaluation` is `true`, run "Parallel evaluation" above for
+   `.harness/final/NN/` and go to step 4. Otherwise spawn a **fresh
+   `harness-evaluator`** with `config.json`, `spec.md`, the running
    app, and `.harness/final/NN/`. On round 01 it derives `SPEC-n` criteria from the
    spec itself — there is no contract to negotiate, which is the point. On later
    rounds, tell it this is a **re-check** and give it the previous round's
    `.harness/final/NN/verdict.json` and `commit`: it reuses those `SPEC-n` ids,
    re-verifies failed and diff-affected criteria, and runs the full test suite as
    the regression check.
-4. Validate the verdict with `validate_verdict.py` as in the sprint loop; append to
+4. Validate the verdict with `validate_verdict.py` as in the sprint loop, with
+   `--test-changes` when that file exists; append to
    `finalRounds`, copying `verificationMode` into the summary as above.
 5. **Pass** → commit, set `phase: "done"`, write the final handoff, and report.
    **Fail** → set `phase: "final-building"` (leave `currentRound` at `NN` — the fix
@@ -343,7 +475,9 @@ updated, `handoff.md` rewritten, journal appended, artifacts committed —
 
 After each sprint and each final round print a short block: the number, verdict,
 verification mode, six scores with the previous round's for comparison (waived ones
-shown as waived, not as a number), blocking issue count, whether a codex review ran,
+shown as waived, not as a number), blocking issue count (and how many of them were independently reproduced, when
+parallel evaluation ran), whether a codex review ran, whether the round weakened
+its tests,
 tokens and duration for that round as `ledger.py report` gives them, and what comes
 next. Do not editorialize about
 progress.

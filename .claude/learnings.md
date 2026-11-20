@@ -139,3 +139,28 @@ against the old version before the missing ledger file gave it away. To test a w
 copy there, copy it to a scratch directory, change `name` in its `plugin.json`
 (e.g. `crystal-harness-dev`) and load that; confirm with `--debug-file` that hook lines
 name the dev plugin.
+
+## 2026-11-20: what a plugin workflow can and cannot do for the harness
+Measured with `workflows/evaluate.js` on Claude Code 2.1.329:
+- `agent()` with `schema` composes with a plugin `agentType` whose `tools:` list is
+  restricted — the evaluator returned validated JSON. Use it for the small facts the
+  script needs (which issues to reproduce); the judgement itself still goes in files.
+- A thunk passed to `parallel()` may `await` several `agent()` calls in sequence, so
+  "one agent beside a sequential chain" is expressible. That is the shape the lenses
+  need: everything that runs the app shares its ports and datastore and must be serial.
+- The script has no filesystem. Anything that must be checked deterministically
+  (merging lens verdicts, validating them) has to run in the orchestrating session
+  after the workflow returns — a workflow cannot be its own gate.
+- A whole lens round on a 60-line toy API (tests, api, code, two reproductions; evaluators
+  forced to Sonnet 5.5) recorded about 1.0M tokens in the ledger, almost all cache reads.
+- The `PreToolUse` gate on `Agent|Workflow` denies in a live session with the reason
+  shown to the model verbatim; the model stopped and reported it rather than retrying.
+
+## 2026-11-20: a push that lands after the merge is silently not in main
+PR #3 was squash-merged about a minute before a follow-up fix was committed and pushed
+to the same branch. The push succeeded, the branch looked right, and main did not have
+the fix. Nothing flags this. After any merge of a branch that had late commits, run
+`git diff <branch tip> origin/main --stat`; anything it prints was left behind. Also:
+restarting a merged branch needs a history rewrite, and a force push may be refused by
+the permission mode — merging `origin/main` into the old branch (`-X ours` for the
+hunks the late commit touched) gets the same tree with an ordinary push.

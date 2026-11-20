@@ -40,6 +40,10 @@ Target, from `$1`:
    The summary is the only per-round history: the next round overwrites this
    round's `verdict.json` in place.
 
+This command always uses a single evaluator, whatever `harness.parallelEvaluation`
+says — the lens workflow belongs to the build loop, which knows the round's commit
+and what the previous round graded.
+
 This command does not commission a codex review; that belongs to the build loop,
 which knows which diff the round produced. If a `codex-review.md` is already in the
 target directory the evaluator will read it as usual.

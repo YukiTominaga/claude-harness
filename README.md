@@ -46,6 +46,8 @@ flowchart TB
     subgraph det["Deterministic code — no model, no judgement"]
         vc["validate_contract.py"]
         vv["validate_verdict.py"]
+        mv["merge_verdicts.py"]
+        tc["test_changes.py"]
         led["ledger.py<br/>(SubagentStop hook)"]
         guard["guard_harness_artifacts.py<br/>(PreToolUse hook)"]
         inject["inject_harness_context.py<br/>(SessionStart hook)"]
@@ -58,7 +60,7 @@ flowchart TB
 
     human -- "approves config, spec;<br/>clears blocks" --> orch
     orch -- spawns --> planner & gen & evalr
-    orch -- runs --> vc & vv
+    orch -- runs --> vc & vv & mv & tc
     orch -- "runs codex_review.py" --> codex
     evalr -- "drives the UI<br/>(browserVerification: true)" --> pw
     guard -. "blocks writes outside<br/>each agent's lane" .-> gen & evalr
@@ -122,6 +124,12 @@ flowchart LR
     loop -- "pass, next sprint" --> g1
     loop -- "feature ordering done" --> final["final assessment<br/>evaluator derives SPEC-n from spec.md"]
 ```
+
+With `parallelEvaluation: true` the single evaluator in these diagrams becomes one
+evaluator per lens (`tests`, `api`, `code`, and `screen` when the browser is on),
+run by the plugin's `evaluate` workflow. `merge_verdicts.py` turns their files into
+the round's `verdict.json` — or into no verdict at all if a lens is missing — and
+the rest of the loop is unchanged.
 
 ### Who decides what
 

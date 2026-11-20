@@ -100,6 +100,10 @@ def cases(root):
         ("gen -> sprints codex-review.md", write(gen, ".harness/sprints/01/codex-review.md", root), DENY),
         ("gen -> final codex-review.md", write(gen, ".harness/final/02/codex-review.md", root), DENY),
         ("gen -> bash redirect into codex-review", bash(gen, "echo x > .harness/final/01/codex-review.md", root), DENY),
+        # test-changes.json reports what the round did to the tests. The generator
+        # would be writing the report on its own test deletions.
+        ("gen -> final test-changes.json", write(gen, ".harness/final/02/test-changes.json", root), DENY),
+        ("gen -> bash redirect into test-changes", bash(gen, "echo '{}' > .harness/final/02/test-changes.json", root), DENY),
         # What the generator legitimately does.
         ("gen -> sprints report.md", write(gen, ".harness/sprints/01/report.md", root), ALLOW),
         ("gen -> final report.md", write(gen, ".harness/final/01/report.md", root), ALLOW),
@@ -123,12 +127,21 @@ def cases(root):
         # evidence it is about to cite.
         ("eval -> sprints codex-review.md", write(ev, ".harness/sprints/01/codex-review.md", root), DENY),
         ("eval -> final codex-review.md", write(ev, ".harness/final/01/codex-review.md", root), DENY),
+        ("eval -> sprints test-changes.json", write(ev, ".harness/sprints/01/test-changes.json", root), DENY),
         # What the evaluator legitimately does.
         ("eval -> final verdict.json", write(ev, ".harness/final/01/verdict.json", root), ALLOW),
         ("eval -> sprints qa.md", write(ev, ".harness/sprints/01/qa.md", root), ALLOW),
         ("eval -> sprints screenshots", write(ev, ".harness/sprints/01/screenshots/fail.png", root), ALLOW),
         ("eval -> contract review block", write(ev, ".harness/sprints/01/contract.md", root), ALLOW),
         ("eval -> playwright artifacts", write(ev, ".harness/artifacts/snap.png", root), ALLOW),
+        # Parallel evaluation: each lens writes its own files under lenses/.
+        ("eval -> lens verdict", write(ev, ".harness/final/02/lenses/api.json", root), ALLOW),
+        ("eval -> lens notes", write(ev, ".harness/sprints/01/lenses/code.md", root), ALLOW),
+        ("eval -> reproduction result", write(ev, ".harness/final/02/lenses/verify/B-api-1.json", root), ALLOW),
+        ("gen -> lens verdict", write(gen, ".harness/final/02/lenses/api.json", root), DENY),
+        ("gen -> bash into lens verdict", bash(gen, "echo '{}' > .harness/final/02/lenses/api.json", root), DENY),
+        ("gen -> bash in the app's own lenses dir", bash(gen, "ls src/lenses/ && npm test", root), ALLOW),
+        ("gen -> app source named lenses", write(gen, "src/lenses/wide.ts", root), ALLOW),
         ("eval -> bash dev server", bash(ev, "npm run dev", root), ALLOW),
         ("eval -> bash sqlite3 read", bash(ev, 'sqlite3 app.db "select count(*) from notes"', root), ALLOW),
         ("eval -> bash reading codex-review", bash(ev, "cat .harness/sprints/01/codex-review.md", root), ALLOW),

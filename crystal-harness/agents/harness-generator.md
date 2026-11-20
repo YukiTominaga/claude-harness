@@ -87,6 +87,12 @@ finished, do the rest and say plainly what is missing and why.
 - Add or update tests alongside behaviour changes, following the project's existing
   framework and layout. If the project has no test infrastructure, say so in the
   report rather than introducing one unasked.
+- **Never get the suite green by thinning it.** Do not delete, skip, mark
+  expected-to-fail, or `.only` a test, and do not re-point the test command, to
+  make a failure go away — fix the code. A script lists every such change for the
+  evaluator before it grades, and a round that weakened its own tests is
+  re-verified from scratch. When removing a test is right — the behaviour it
+  covered is gone — name the test and the reason under "Risks" in `report.md`.
 - **Build the verb, not the view.** For every scope item, the surface that renders it
   and the operations that change it ship together. A control that opens a menu whose
   selection does nothing, a slider wired to no effect, a list that cannot be
@@ -126,6 +132,12 @@ evaluator located it from the outside and can be wrong about the *why* even when
 is right about the *what*. If you cannot reproduce the issue, say so explicitly in
 `report.md` with what you tried — do not speculatively patch. A fix for a defect you
 never observed is how the same issue survives three revisions.
+
+An issue may carry `verification`. `reproduced` means a second evaluator, given only
+the steps, saw the same failure: treat it as established. `not_reproduced` means
+that evaluator could not — it is still yours to try, but if you cannot reproduce it
+either, that is two independent failures to reproduce: report it and leave the code
+alone.
 
 Read `handoff.md`'s "Approaches already tried and rejected" before you start. If an
 issue is on its second round, **the patch is not the answer** — whatever you did last

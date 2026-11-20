@@ -181,6 +181,54 @@ def cases():
             "browser", criteria=[criterion("AC-1", "pass"), criterion("AC-2", "fail")],
         ), INVALID, "marked fail"),
         ("final phase with a sprint number", mutate("browser", phase="final"), INVALID, "sprint"),
+
+        # Optional fields added for lens evaluation and issue reproduction.
+        ("issue carries a reproduction result", mutate(
+            "browser", overall="fail", blockingIssues=[dict(issue(), verification="reproduced")],
+            criteria=[criterion("AC-1", "fail")],
+        ), OK, None),
+        ("issue verification outside the enum", mutate(
+            "browser", overall="fail", blockingIssues=[dict(issue(), verification="maybe")],
+            criteria=[criterion("AC-1", "fail")],
+        ), INVALID, "verification"),
+        ("environment lists the lenses merged", mutate("headless", **{"environment.lenses": ["tests", "api", "code"]}), OK, None),
+        ("environment.lenses must be strings", mutate("headless", **{"environment.lenses": ["api", 3]}), INVALID, "lenses"),
+        ("environment.testChanges outside the enum", mutate("headless", **{"environment.testChanges": "fine"}), INVALID, "testChanges"),
+    ]
+
+
+CARRIED = "carried from round 1: diff does not touch notes; test suite passed"
+
+
+def test_change_cases():
+    """(name, verdict, report, expected, needle) — validated with --test-changes."""
+    weakened = {"weakened": True, "reasons": ["tests/test_notes.py: test file deleted"]}
+    clean = {"weakened": False, "reasons": []}
+    reviewed = {"environment.testChanges": "reviewed"}
+    return [
+        ("clean report, reviewed", mutate("headless", **reviewed), clean, OK, None),
+        ("clean report, none", mutate("headless", **{"environment.testChanges": "none"}), clean, OK, None),
+        ("clean report, carried pass is fine", mutate(
+            "headless", criteria=[criterion("AC-1", "pass", evidence=CARRIED)], **reviewed,
+        ), clean, OK, None),
+        ("report exists but verdict never mentions it", base("headless"), clean, INVALID, "testChanges"),
+        ("report exists but verdict says absent", mutate("headless", **{"environment.testChanges": "absent"}), clean, INVALID, "testChanges"),
+        ("weakened suite, reviewed, nothing carried", mutate(
+            "headless", criteria=[criterion("AC-1", "pass", evidence="POST /notes returned 201; row read back with sqlite3")], **reviewed,
+        ), weakened, OK, None),
+        ("weakened suite, not reviewed", mutate("headless", **{"environment.testChanges": "none"}), weakened, INVALID, "testChanges"),
+        ("weakened suite, carried pass", mutate(
+            "headless", criteria=[criterion("AC-1", "pass", evidence=CARRIED)], **reviewed,
+        ), weakened, INVALID, "carried pass"),
+        ("weakened suite, carried pass in other casing", mutate(
+            "headless", criteria=[criterion("AC-1", "pass", evidence="  Carried From Round 2 — untouched")], **reviewed,
+        ), weakened, INVALID, "carried pass"),
+        ("weakened suite, carried pass inside a failing verdict", mutate(
+            "headless", overall="fail", blockingIssues=[issue()],
+            criteria=[criterion("AC-1", "fail"), criterion("AC-2", "pass", evidence=CARRIED)], **reviewed,
+        ), weakened, INVALID, "carried pass"),
+        ("unreadable report is an error, not a clean bill", mutate("headless", **reviewed), "{ not json", INVALID, "--test-changes"),
+        ("report without a weakened flag", mutate("headless", **reviewed), {"reasons": []}, INVALID, "--test-changes"),
     ]
 
 
@@ -206,11 +254,31 @@ def main():
                     print(f"      {proc.stdout.strip().splitlines()[0]}")
             print(f"{'PASS' if ok else 'FAIL'}  {name:<44} want={expected:<8} got={got}")
 
+        report_path = os.path.join(root, "test-changes.json")
+        for name, verdict, report, expected, needle in test_change_cases():
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(verdict, f)
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report if isinstance(report, str) else json.dumps(report))
+            proc = subprocess.run(
+                ["python3", VALIDATOR, path, "--test-changes", report_path], capture_output=True, text=True
+            )
+            got = OK if proc.returncode == 0 else INVALID
+            ok = got == expected
+            if ok and needle and needle not in proc.stdout:
+                ok = False
+                got = f"invalid, but not about {needle!r}"
+            if not ok:
+                failures.append(name)
+                if proc.stdout.strip():
+                    print(f"      {proc.stdout.strip().splitlines()[0]}")
+            print(f"{'PASS' if ok else 'FAIL'}  {name:<44} want={expected:<8} got={got}")
+
         print()
         if failures:
             print(f"{len(failures)} failing case(s): {', '.join(failures)}")
             return 1
-        print(f"all {len(cases())} verdict cases pass")
+        print(f"all {len(cases()) + len(test_change_cases())} verdict cases pass")
         return 0
     finally:
         shutil.rmtree(root, ignore_errors=True)

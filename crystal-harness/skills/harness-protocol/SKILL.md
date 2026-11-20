@@ -29,8 +29,12 @@ A fresh agent reading complete files does not.
 │       ├── contract.md      # generator proposes, evaluator accepts
 │       ├── report.md        # generator's completion report + self-check
 │       ├── codex-review.md  # independent review of the diff, orchestrator-owned
-│       ├── qa.md            # evaluator verdict, human-readable
-│       ├── verdict.json     # evaluator verdict, machine-readable
+│       ├── test-changes.json # what the round did to the tests, orchestrator-owned
+│       ├── lenses/          # parallel evaluation only: one verdict per lens
+│       │   ├── api.json, api.md, tests.json, …
+│       │   └── verify/      # one reproduction result per blocking issue
+│       ├── qa.md            # the round's verdict, human-readable
+│       ├── verdict.json     # the round's verdict, machine-readable
 │       └── screenshots/
 └── final/
     └── 01/                  # one directory per end-of-run QA round
@@ -38,8 +42,15 @@ A fresh agent reading complete files does not.
         ├── verdict.json
         ├── report.md        # generator's report for this round's fixes
         ├── codex-review.md
+        ├── test-changes.json
+        ├── lenses/
         └── screenshots/
 ```
+
+`lenses/` exists only when `harness.parallelEvaluation` is `true`. In that mode each
+lens evaluator writes its own pair of files there and
+`scripts/merge_verdicts.py` — not an agent — produces the round's `verdict.json`
+and `qa.md` from them. The `evaluation-lenses` skill defines the lens files.
 
 `codex-review.md` is present only when the `codex` plugin is installed and
 `harness.codexReview` is not `false`; `screenshots/` only in `browser` mode. Their
@@ -62,7 +73,9 @@ assessment asks whether the product `spec.md` described actually exists.
 | `sprints/NN/contract.md` | generator (proposal), evaluator (review block) | both |
 | `sprints/NN/report.md`, `final/NN/report.md` | generator | evaluator |
 | `*/codex-review.md` | the orchestrating command (via `scripts/codex_review.py`) | evaluator (read-only) |
-| `*/qa.md`, `*/verdict.json`, `*/screenshots/` | **evaluator only** | generator (read-only) |
+| `*/test-changes.json` | the orchestrating command (via `scripts/test_changes.py`) | evaluator (read-only), `validate_verdict.py` |
+| `*/qa.md`, `*/verdict.json`, `*/screenshots/` | **evaluator only** — or, in parallel evaluation, `scripts/merge_verdicts.py` run by the orchestrating command | generator (read-only) |
+| `*/lenses/` | **evaluator only**, one lens or one reproduction per agent | `merge_verdicts.py`; generator never |
 | `state.json`, `handoff.md`, `journal.md` | the orchestrating command | everyone |
 | `ledger.jsonl` | the `SubagentStop` hook, and `scripts/ledger.py append` for codex reviews | `/crystal-harness:status`, via `scripts/ledger.py report` |
 
@@ -73,10 +86,11 @@ the generator is blocked from verdict artifacts in both `sprints/NN/` and
 `journal.md`, `config.json`, `spec.md`) and from `ledger.jsonl`; the evaluator is blocked from everything
 except its round artifacts, the contract review block, and `.harness/artifacts/`.
 
-`codex-review.md` is blocked for **both** of them, which is the only row where that
-is true. It is an independent review of the generator's diff, commissioned before
-the evaluator exists. A generator that can write it manufactures its own second
-opinion; an evaluator that can write it edits the evidence it is about to cite.
+`codex-review.md` and `test-changes.json` are blocked for **both** of them. Each is
+evidence about the generator's diff, commissioned before the evaluator exists. A
+generator that can write one manufactures its own second opinion, or its own report
+on the tests it deleted; an evaluator that can write one edits the evidence it is
+about to cite.
 
 ## `state.json`
 

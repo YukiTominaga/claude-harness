@@ -27,6 +27,8 @@ Anthropic の
 | **スプリントは通るのにプロダクトとしては失敗** | 10スプリントすべて pass したのに、アプリとしてまとまっていない。 | 誰とも交渉していない基準で `spec.md` 全体を採点する **final assessment**。これに pass するまで run は終わらない。 |
 | **作り手と同じ先入観を持つ採点者** | 生成と評価は別エージェントでも、同じモデルファミリーが書いた diff を同じファミリーが読んでいる。 | Claude 以外のモデル(`codex` プラグイン)による各 diff の独立レビューを任意で追加できる。レビュー結果は、evaluator がコードで裏を取るべき判断材料として記録するだけで、合否のゲートには使わない。 |
 | **QA が重すぎて回せない** | ラウンドのコストの大半をブラウザ検証が占めるので、なし崩しにスキップされ、スキップしたことも記録されない。 | ブラウザ検証は config のフラグで切り替え、**3つのモードとして記録**する。スキップしたラウンドは verdict にそう書かれる。検証を求められたのに実行できなかったラウンドは絶対に pass しない。 |
+| **テストが自分で自分を保証する** | evaluator はプロジェクトのテストスイートを頼りにするが、それを書いたのは generator。落ちるテストを消したり skip したりしても、スイートは赤くならない。 | evaluator が動く前に、そのラウンドがテストに何をしたかをスクリプトが報告する。スイートが弱められていたら、以前の pass をスイートを根拠に持ち越すことはできず、verdict の validator がそれを強制する。 |
+| **上限のない run** | 「次で終わりそうだ」と見えるたびにラウンドが続く。 | 台帳をもとに確認する、任意のトークン上限とコスト上限。達したらループが止まって人間に聞き、人間が上限を上げるまで hook がハーネスのエージェントの起動を拒否する。 |
 
 ## インストール
 
@@ -56,8 +58,9 @@ claude
 claude --plugin-dir /absolute/path/to/claude-harness/crystal-harness
 ```
 
-インストールできたか確認します。インベントリに agent 3つ、MCP サーバー 1つ、hook 3つ、skill 9つ
-が表示されれば正常です(6つのコマンドが、3つのリファレンス skill と合わせて skill として数えられます)。
+インストールできたか確認します。インベントリに agent 3つ、MCP サーバー 1つ、hook 3つ、skill 10個
+が表示されれば正常です(6つのコマンドが、4つのリファレンス skill と合わせて skill として数えられます)。
+このほかに `evaluate` workflow が1つあります。
 
 ```bash
 claude plugin details crystal-harness
@@ -133,14 +136,18 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 │   ├── contract.md      # generator が提案し、evaluator が受諾する
 │   ├── report.md        # generator の完了報告 + セルフチェック
 │   ├── codex-review.md  # diff の独立レビュー(codex が入っている場合)
-│   ├── qa.md            # evaluator の判定(人間向け)
-│   ├── verdict.json     # evaluator の判定(機械向け)
+│   ├── test-changes.json # そのラウンドがテストに何をしたか(スクリプトが出力)
+│   ├── lenses/          # 並列評価のときだけ: 観点ごとの verdict
+│   ├── qa.md            # ラウンドの判定(人間向け)
+│   ├── verdict.json     # ラウンドの判定(機械向け)
 │   └── screenshots/
 └── final/01/            # run の最後の評価。ラウンドごとに1ディレクトリ
     ├── qa.md
     ├── verdict.json
     ├── report.md
     ├── codex-review.md
+    ├── test-changes.json
+    ├── lenses/
     └── screenshots/
 ```
 
@@ -205,9 +212,12 @@ hook は少しだけ待つ必要もあります。Claude Code がエージェン
   `screenshots/` を書くこと。generator が verdict を書けるなら、すべての pass が自作自演になる。
 - `harness-evaluator` が `.harness/` の外に何かを書くこと。evaluator が採点対象を直せるなら、
   自分が判定するものの作者になってしまう。
-- **どちらか一方でも** `codex-review.md` を書くこと。両方が禁止されている唯一のファイル。
-  generator が書けるなら自分でセカンドオピニオンをでっち上げられるし、evaluator が書けるなら
-  自分がこれから引用する証拠を編集できてしまう。
+- **どちらか一方でも** `codex-review.md` や `test-changes.json` を書くこと。両方が禁止されている
+  ファイル。どちらも generator の diff についての証拠で、evaluator が起動する前に用意される。
+  generator が書けるなら、セカンドオピニオンや「自分が消したテストの報告」を自作できてしまう。
+  evaluator が書けるなら、自分がこれから引用する証拠を編集できてしまう。
+- `harness-generator` がラウンドの `lenses/` の下に何かを書くこと。並列評価では、そこにある
+  ファイルが verdict そのものだから。
 
 同じ hook が、オーケストレーターのファイル(`state.json`、`handoff.md`、`journal.md`、
 `config.json`、`spec.md`)と `ledger.jsonl` への両者の書き込みも止めます。台帳を編集できる
@@ -269,10 +279,14 @@ hook は少しだけ待つ必要もあります。Claude Code がエージェン
     "contextReset": true,             // false → フェーズをまたいで同じエージェントを使い続ける
     "browserVerification": false,     // true → Playwright で UI を操作する
     "codexReview": "auto",            // "auto" | true | false
+    "parallelEvaluation": false,      // true → 観点ごとに evaluator を立て、スクリプトで統合する
+    "reproduceBlockingIssues": true,  // 並列評価のときだけ: blocking issue を1件ずつ再現させる
     "maxSprints": 12,
     "maxRevisionsPerSprint": 5,
     "maxAcceptanceCriteria": 20,      // スプリント contract あたりの上限。validate_contract.py が強制
     "maxFinalQaRounds": 5,
+    "maxRunTokens": null,             // エージェントがこのトークン数を使ったら止まって聞く
+    "maxRunCostUsd": null,            // …またはこの金額に達したら(costPerMTokUsd が必要)
     "costPerMTokUsd": null            // {input, output, cacheWrite, cacheRead} を USD/MTok で指定
                                       // → /crystal-harness:status に推定ドル額が出る
   }
@@ -478,6 +492,82 @@ headless で捕まえられないものをはっきり書いておきます。**
 節約になるのはラウンド側です。時間を食っているのはサーバーの起動ではなく、evaluator のブラウザとの
 往復だからです。
 
+### そのラウンドがテストに何をしたか
+
+evaluator はプロジェクトのテストスイートを2つの場面で頼りにします。スイートが落ちれば、それは
+決定的な証拠です。そして再チェックのラウンドでは、スイートが通っていることを根拠に、前回 pass した
+基準を検証し直さずに*持ち越し*ます。ところが、そのスイートを書くのは generator です。つまり
+generator には、正しくないまま通す手段があります。落ちるテストを消す、skip する、テストコマンドを
+必ず成功する別のものに差し替える、のいずれかです。どれもスイートを赤くしません。
+
+そこで evaluator が動く前に、`scripts/test_changes.py` がラウンドの diff を読み、ラウンドの
+ディレクトリに `test-changes.json` を書きます。内容は、追加・変更・削除されたテストファイル、
+削除されたテストケース、追加された skip や `.only` の印、`package.json` の `scripts.test` の変更、
+そして `weakened` というフラグです。evaluator はスイートを頼る前にこれを読み、理由の示されていない
+削除を blocking issue として扱います。
+
+誰の判断にも依存しない部分もあります。レポートが `weakened` のとき、
+`validate_verdict.py --test-changes` は、以前のラウンドから pass を持ち越した verdict を却下します。
+そのラウンドは全体を検証し直すことになります。この判定は意図的に厳しめです。正当なリファクタリングでも
+反応することがありますが、誤検知のコストは「1ラウンド分の全件検証」で済むのに対し、見逃しのコストは
+「誰も稼いでいない pass」だからです。
+
+codex レビューと同じく、このファイルはどちらのエージェントも書けません。guard が両方を止めます。
+
+### 並列評価
+
+デフォルトはオフ(`parallelEvaluation: false`)です。オンにすると、1体の evaluator がすべてを見る
+代わりに、**観点(lens)**ごとに `harness-evaluator` を1体ずつ立ててラウンドを採点します。
+
+| 観点 | やること | 採点する観点 |
+| --- | --- | --- |
+| `tests` | ビルドし、スイートを実行し、`test-changes.json` を確認する | なし |
+| `api` | API を叩き、データストアを読む。ブラウザなしのときは受け入れ基準も担当する | product depth、functionality |
+| `screen` | Playwright で画面を操作する。`browserVerification: true` のときだけ存在し、そのとき受け入れ基準を担当する | product depth、functionality、design、originality、craft |
+| `code` | diff と `codex-review.md` を読む | code quality |
+
+実行するのはプラグインの `evaluate` workflow です。`code` を、`tests` → `api` → `screen` の列と
+並行して走らせます。アプリを動かす観点を意図的に直列にしているのは、ポートとデータストアを共有する
+からです。別の観点がレコードを作った直後に「空の状態」の確認が失敗しても、それは偽の失敗です。
+したがってこのモードで得られるのは、所要時間の短縮よりも、観点ごとの集中と「もう一度見る目」です。
+ラウンドあたりのエージェント数は増えます。
+
+結果をモデルが統合することはありません。各観点はラウンドの `lenses/` の下に自分の verdict ファイルを
+書き、`scripts/merge_verdicts.py` が、部分より厳しくなる方向にしか働かない規則で、ラウンドの
+`verdict.json` と `qa.md` を作ります。
+
+- 2つの観点が同じ観点を採点したら、**低いほう**の点を採る
+- すべての観点の blocking issue をすべて残す
+- **すべての**観点が自分の担当分を pass したときだけ、ラウンドは pass
+- 観点のファイルが欠けている、形式が壊れている、内容が自己矛盾している、別のラウンドや別のコミットの
+  ものである、のいずれかなら**verdict は出ない**。スクリプトは exit 2 で終わり、何も書かない
+
+最後の規則は、ブラウザが応答しなかったときの `degraded` モードと同じ考え方です。設定された範囲より
+少ししか測れなかったラウンドを、verdict として読ませてはいけません。
+
+`reproduceBlockingIssues: true` のとき、workflow は続けて、blocking issue を1件ずつ新しい evaluator に
+渡します。渡すのは再現手順と期待される振る舞いだけで、観点側のメモも原因も渡しません。同じ失敗が
+見えたかどうかが、issue に記録されます。これは注記であって、ふるいではありません。誰も再現できなかった
+issue も blocking のまま残り、ラウンドは fail のままです。変わるのは停止ルールです。generator も
+再現できなければ、独立した2者が再現に失敗したことになるので、ループは2回目の修正に進まず人間に聞きます。
+
+デフォルトがオフなのは、ここにある他のデフォルトと同じ理由です。1体の evaluator が見逃すものを各観点が
+どれだけ見つけるのか、まだ測れていません。観点と再現はそれぞれ台帳の1エントリになるので、同じ仕様に
+対してオンで1回、オフで1回走らせれば、コストに見合うかを比べられます。
+
+### 予算上限
+
+`maxRunTokens` と `maxRunCostUsd` は、run がエージェントに使ってよい量の上限です。数えるのは台帳です。
+オーケストレーターはエージェントを起動する前に毎回確認し(`ledger.py budget`)、上限に達したら止まって
+人間に聞きます。文章だけで書かれた停止ルールは飛ばされるので、`PreToolUse` hook がこれを保証に
+変えています。上限に達すると、ハーネスのエージェントと `evaluate` workflow の起動を拒否し、人間が
+`config.json` の上限を書き換えるまで解除されません。
+
+コスト上限には料金が必要です。`costPerMTokUsd` なしで `maxRunCostUsd` を設定すると、「強制できない
+上限」として報告し、run を止めます。設定したのに黙って何もしない上限は、上限がないより悪いからです。
+この hook 自体は、失敗時に通す(fail open)設計です。コスト管理であって担当範囲の境界ではないので、
+hook 側のエラーで作業が止まることはありません。
+
 ### 独立レビュー
 
 [`codex`](https://github.com/openai/codex-plugin-cc) プラグインがインストール済みで認証も済んでいれば、
@@ -597,6 +687,15 @@ planner が出すのと同じ機能一覧を作る。
 モデルの弱点を補うためのものではありません。クラッシュ、`/clear`、新しいセッション、別のマシンを
 run が乗り越えるための仕組みです。コンテキスト長が伸びても古くなりません。
 
+**並列評価 — まだオンにしていません。証拠で決めてください。** ここにある部品の中で唯一、外される
+のを待つのではなく後から足したものなので、オフの状態で出荷しています。
+
+*オンにしてよい信号:* 1体の evaluator のラウンドが、特定の領域(API、テスト、コード)の欠陥を
+見逃し続け、後のラウンドや人間がそれを見つけている。
+
+*オフに戻す信号:* 台帳では各観点の合計が1体の evaluator の何倍ものコストになっているのに、統合された
+verdict が、同じビルドに対して1体の evaluator が返すものと変わらない。
+
 **7. ルーブリック — 残して、較正し続けてください。** 古くなるのは仕組みではなく較正です。出力の品質の
 底上げが進むにつれて、かつては妥当だった Originality の 3 は 2 になります。定期的に、自分の最近の出力と
 突き合わせて `calibration-examples.md` を読み直し、アンカーを動かしてください。
@@ -630,15 +729,19 @@ crystal-harness/
 ├── commands/{init,plan,build,qa,resume,status}.md
 ├── skills/
 │   ├── harness-protocol/SKILL.md        # .harness/ の約束事、2つの JSON Schema、handoff テンプレート、台帳
+│   ├── evaluation-lenses/SKILL.md       # 4つの観点、観点ごとの verdict ファイル、issue の再現
 │   ├── sprint-contract/SKILL.md         # 固定するインターフェースと、テスト可能な受け入れ基準
 │   └── qa-rubric/
 │       ├── SKILL.md                     # 6観点、アンカー、閾値、verdict.json のスキーマ
 │       └── references/calibration-examples.md
+├── workflows/evaluate.js                # 並列評価: 観点ごとに evaluator 1体、続いて issue の再現
 ├── hooks/hooks.json
 ├── scripts/
 │   ├── guard_harness_artifacts.py       # PreToolUse hook が実行する担当範囲のポリシー
 │   ├── inject_harness_context.py        # ここに run があるとき SessionStart で通知する
-│   ├── ledger.py                        # コスト台帳: SubagentStop hook、codex 分の追記、集計
+│   ├── ledger.py                        # コスト台帳: SubagentStop hook、codex 分の追記、集計、予算ゲート
+│   ├── test_changes.py                  # ラウンドがテストに何をしたか: 削除、skip、コマンドの差し替え
+│   ├── merge_verdicts.py                # 観点ごとの verdict → 1つの verdict.json + qa.md。無理なら何も出さない
 │   ├── validate_verdict.py              # verdict.json のスキーマ + モードごとに pass が意味してよいこと
 │   ├── validate_contract.py             # contract.md の基準数の上限、スコープの大きさ、ID の整合性
 │   ├── codex_review.py                  # codex プラグインを探し、diff をレビューし、codex-review.md を書く
@@ -646,7 +749,9 @@ crystal-harness/
 │   ├── test_validate_verdict.py
 │   ├── test_validate_contract.py
 │   ├── test_codex_review.py
-│   └── test_ledger.py
+│   ├── test_ledger.py
+│   ├── test_test_changes.py
+│   └── test_merge_verdicts.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -663,16 +768,20 @@ python3 crystal-harness/scripts/test_validate_verdict.py
 python3 crystal-harness/scripts/test_validate_contract.py
 python3 crystal-harness/scripts/test_codex_review.py
 python3 crystal-harness/scripts/test_ledger.py
+python3 crystal-harness/scripts/test_test_changes.py
+python3 crystal-harness/scripts/test_merge_verdicts.py
 ```
 
 フレームワークも依存ライブラリも不要です。
 
-**担当範囲の guard に 56 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
-2つの拒否ポリシー、両エージェントを拒否する `codex-review.md` の行、コスト台帳、
+**担当範囲の guard に 66 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
+2つの拒否ポリシー、両エージェントを拒否する `codex-review.md` と `test-changes.json` の行、
+観点ごとのファイル、コスト台帳、
 2つの抜け道(`..` によるディレクトリ遡りと `.harness/` 内に仕込んだシンボリックリンク)、大文字小文字の
 同一視、Bash の経路、正当な書き込みすべて、2つの fail-closed の経路。
 
-**verdict の validator に 33 ケース**: スキーマと、各検証モードで `pass` が意味してよいことについての
+**verdict の validator に 50 ケース**: スキーマ、弱められたテストスイートは持ち越しの pass を
+すべて無効にするという規則、そして各検証モードで `pass` が意味してよいことについての
 全ルール。headless で `null` にしなければならない3観点、headless の pass がその免除と引き換えに満たす
 べき条件、閾値そのもの、degraded のラウンドは絶対に pass しないこと。
 
@@ -686,13 +795,22 @@ exit code の約束事を両方向から確認する。
 超過・未満、セクションの欠落や空、ID の重複、スコープ 3〜7 の範囲、コードフェンス内の例を数えないこと、
 contract に存在しない ID を参照する amendment や修正メモ。
 
-**コスト台帳に 54 ケース**: 最後の1リクエストではなく全リクエストを合計すること、hook の開始後に
+**テスト変更レポートに 21 ケース**: スイートを薄くする方法のそれぞれ(ファイルの削除、ケースの削除、
+skip、`.only`、`xfail`、テストコマンドの差し替えや削除、テストのツリー外へのリネーム)と、警告を
+出してはいけない正当な変更のそれぞれ。
+
+**verdict の統合に 46 ケース**: 2つの点のうち低いほうが残ること、すべての issue が残ること、1つの
+観点の fail がラウンドを fail にすること、再現結果は issue に注記されるだけで issue を消さないこと。
+加えて、観点の欠落から別コミットを採点したファイルまで、統合そのものを拒否する20通りあまり。
+
+**コスト台帳に 71 ケース**: 最後の1リクエストではなく全リクエストを合計すること、hook の開始後に
 transcript へ届いた最後の応答も数えること、ストリームで複数行に
 分かれた応答を1回だけ数えること、複数回停止したエージェントのスナップショットを加算せず置き換えること、
 hook がどんな不正な入力でも exit 0 で終わり、読めない transcript をゼロではなく `null` として記録
-すること、区分ごとの料金計算、0.10.0 より前の `state.json` のエントリをトークン合計に入れないこと。
+すること、区分ごとの料金計算、0.10.0 より前の `state.json` のエントリをトークン合計に入れないこと、
+予算上限とそれを強制する hook。
 
-プロンプトではなくこの5つをテストしているのは、この5つが*気づかれないまま*壊れるからです。
+プロンプトではなくこの7つをテストしているのは、この7つが*気づかれないまま*壊れるからです。
 
 - contract の validator が拒否しなくなると、contract は再び上限を超えて膨らみ、run のすべての
   フェーズが遅く高くなる。
@@ -702,5 +820,7 @@ hook がどんな不正な入力でも exit 0 で終わり、読めない transc
   ついてのセカンドオピニオンをラウンドが記録してしまう。
 - 台帳が記録をやめたり二重に数えたりしても、表はもっともらしく見え、「何を外すか」の判断がすべて
   その表に基づいて下される。
+- テスト変更レポートが消されたテストに気づかなくなると、スイートは再び自分で自分を保証するようになる。
+- 統合が甘くなると、主張より少ししか測っていないラウンドが pass に見える。
 
 どれも目に見える症状が出ません。一方、プロンプトが劣化すれば、その出力は誰かが読むので気づけます。
