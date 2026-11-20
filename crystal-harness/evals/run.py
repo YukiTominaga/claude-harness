@@ -67,38 +67,48 @@ def make_copy(destination):
 
 
 def summarize(result):
-    """Recall over seeded cases and false alarms over clean ones, per run."""
-    rows, seeded, clean = [], [0, 0], [0, 0]
+    """Per-run outcomes, and counts over the runs that actually produced a verdict.
+
+    A run with no verdict.json, or one that errored, measured nothing about the
+    evaluator — the session never got as far as a verdict. It is reported as
+    `invalid` and kept out of both rates, because counting it as a miss or as a
+    false alarm would turn a harness problem into a finding about the evaluator.
+    """
+    rows = []
+    counts = {"seeded": {"detected": 0, "valid": 0}, "clean": {"false_alarm": 0, "valid": 0}, "invalid": 0}
     for case in result.get("cases", []):
         name = case.get("name", "?")
         kind = "seeded" if name.startswith("seeded-") else "clean" if name.startswith("clean-") else "other"
         for index, run in enumerate(case.get("arms", {}).get("with", []), 1):
             graders = {g.get("name"): g.get("passed") for g in run.get("graders", [])}
-            errored = bool(run.get("error")) or run.get("aborted")
-            correct = bool(graders) and all(graders.values()) and not errored
-            if kind == "seeded":
-                seeded[1] += 1
-                seeded[0] += int(correct)
-                outcome = "detected" if correct else (
-                    "error" if errored else
-                    "no verdict" if not graders.get("verdict-written") else
-                    "passed the round" if not graders.get("fails-the-round") else
-                    "failed it for another reason")
+            if run.get("error") or run.get("aborted") or not graders.get("verdict-written"):
+                counts["invalid"] += 1
+                outcome = "INVALID — " + ("run error" if run.get("error") or run.get("aborted") else "no verdict was written")
+            elif kind == "seeded":
+                counts["seeded"]["valid"] += 1
+                if all(graders.values()):
+                    counts["seeded"]["detected"] += 1
+                    outcome = "detected"
+                elif not graders.get("fails-the-round"):
+                    outcome = "MISSED — passed the round"
+                else:
+                    outcome = "MISSED — failed the round without naming the defect"
             elif kind == "clean":
-                clean[1] += 1
-                clean[0] += int(not correct and not errored)
-                outcome = "passed" if correct else (
-                    "error" if errored else
-                    "no verdict" if not graders.get("verdict-written") else "FALSE ALARM")
+                counts["clean"]["valid"] += 1
+                if all(graders.values()):
+                    outcome = "passed"
+                else:
+                    counts["clean"]["false_alarm"] += 1
+                    outcome = "FALSE ALARM"
             else:
-                outcome = "passed" if correct else "failed"
+                outcome = "passed" if all(graders.values()) else "failed"
             rows.append((name, index, outcome, run.get("turns"), run.get("durationSeconds"), run.get("costUsd")))
-    return rows, seeded, clean
+    return rows, counts
 
 
-def render(result, rows, seeded, clean, args, plugin_version):
-    def rate(pair):
-        return f"{pair[0]}/{pair[1]}" + (f" ({pair[0] / pair[1] * 100:.0f}%)" if pair[1] else "")
+def render(result, rows, counts, args, plugin_version):
+    def rate(hits, total):
+        return f"{hits}/{total}" + (f" ({hits / total * 100:.0f}%)" if total else "")
 
     lines = [
         "# Evaluator eval",
@@ -109,16 +119,21 @@ def render(result, rows, seeded, clean, args, plugin_version):
         f"- Estimated cost: ${result.get('costUsd', 0):.2f} (list price, from `claude plugin eval`)   "
         f"wall time: {result.get('durationSeconds', 0) / 60:.0f} min" + ("   **PARTIAL RUN**" if result.get("partial") else ""),
         "",
-        f"**Seeded defects detected: {rate(seeded)}.**  ",
-        f"**False alarms on clean apps: {rate(clean)}.**",
-        "",
-        "| case | run | outcome | turns | seconds | est. USD |",
-        "| --- | --- | --- | --- | --- | --- |",
+        f"**Seeded defects detected: {rate(counts['seeded']['detected'], counts['seeded']['valid'])}.**  ",
+        f"**False alarms on clean apps: {rate(counts['clean']['false_alarm'], counts['clean']['valid'])}.**",
     ]
+    if counts["invalid"]:
+        lines += [
+            "",
+            f"**{counts['invalid']} run(s) were invalid and are in neither count** — they ended without a verdict, "
+            "so they say nothing about the evaluator. Find out why before reading the numbers above "
+            "(`--keep-temp` keeps each run's trace).",
+        ]
+    lines += ["", "| case | run | outcome | turns | seconds | est. USD |", "| --- | --- | --- | --- | --- | --- |"]
     for name, index, outcome, turns, seconds, cost in rows:
+        cost_text = f"{cost:.2f}" if isinstance(cost, (int, float)) else "—"
         lines.append(f"| {name} | {index} | {outcome} | {turns if turns is not None else '—'} | "
-                     f"{seconds if seconds is not None else '—'} | {cost:.2f} |" if isinstance(cost, (int, float))
-                     else f"| {name} | {index} | {outcome} | — | — | — |")
+                     f"{seconds if seconds is not None else '—'} | {cost_text} |")
     lines += [
         "",
         "A seeded case counts as detected only if the verdict fails the round **and** names the seeded",
@@ -136,6 +151,7 @@ def main():
     parser.add_argument("--model", default=None, help="model for the main session of each case")
     parser.add_argument("--max-cost-usd", type=float, default=None, help="stop launching runs past this estimated cost")
     parser.add_argument("--keep-copy", action="store_true", help="keep the temporary plugin copy for inspection")
+    parser.add_argument("--keep-temp", action="store_true", help="keep each run's workspace and trace (passed to claude plugin eval)")
     args = parser.parse_args()
 
     with open(os.path.join(PLUGIN, ".claude-plugin", "plugin.json"), "r", encoding="utf-8") as f:
@@ -163,6 +179,8 @@ def main():
         command += ["--model", args.model]
     if args.max_cost_usd is not None:
         command += ["--max-cost-usd", str(args.max_cost_usd)]
+    if args.keep_temp:
+        command += ["--keep-temp"]
 
     print(f"evaluating a copy of {plugin_version} as {COPY_NAME}; results in {out_dir}", flush=True)
     proc = subprocess.run(command, cwd=copy)
@@ -172,15 +190,16 @@ def main():
             return 1
         with open(result_path, "r", encoding="utf-8") as f:
             result = json.load(f)
-        rows, seeded, clean = summarize(result)
+        rows, counts = summarize(result)
         if not rows:
             print("run.py: no case ran — claude plugin eval loaded no cases (see its output above)", file=sys.stderr)
             return 1
-        summary = render(result, rows, seeded, clean, args, plugin_version)
+        summary = render(result, rows, counts, args, plugin_version)
         with open(os.path.join(out_dir, "summary.md"), "w", encoding="utf-8") as f:
             f.write(summary)
         sys.stdout.write("\n" + summary)
-        return 2 if result.get("partial") else 0
+        # 2: the numbers are incomplete — a partial run, or runs that never reached a verdict.
+        return 2 if result.get("partial") or counts["invalid"] else 0
     finally:
         if args.keep_copy:
             print(f"plugin copy kept at {copy}")

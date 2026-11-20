@@ -59,6 +59,8 @@ allowed_tools: [Agent, Read, Bash, Write, Glob, Grep, Skill]
 ---
 
 Run a final assessment of the project in this directory with the harness evaluator.
+That is the whole task: do not run a status or resume command first, whatever a
+session-start note suggests.
 
 Spawn the `crystal-harness:harness-evaluator` agent — do not give it a name — and
 give it exactly this and nothing else:

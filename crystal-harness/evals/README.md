@@ -49,6 +49,11 @@ By regex over the `verdict.json` the evaluator wrote. No model grades a model.
   another reason — the thin tests, say — is not a detection.
 - A clean case is a **false alarm** unless the verdict is `pass` with an empty
   `blockingIssues`.
+- A run that ends **without a verdict** — the session never reached the evaluator,
+  or the run errored — is **invalid**. It is reported, and kept out of both
+  counts: it says something about the harness around the evaluator, not about the
+  evaluator. `run.py` exits 2 when any run was invalid; re-run with `--keep-temp`
+  and read the trace before trusting the rest.
 
 ## What keeps the suite honest
 
