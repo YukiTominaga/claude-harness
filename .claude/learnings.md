@@ -112,7 +112,7 @@ A lead with live teammates can run a workflow at the same time — both complete
 ## 2026-11-20: `subagent_tokens` is the last request, not the run
 The `<usage>subagent_tokens: N` line in an Agent tool result (and `totalTokens` in the
 PostToolUse `tool_response`) is the token count of the agent's **final API request**.
-A two-request agent whose transcript sums to 42,996 reported 21,689. Teammate idle
+A three-request agent whose transcript sums to 64,685 reported 21,689. Teammate idle
 notifications carry no token numbers at all. What does hold the truth is the transcript:
 `SubagentStop` fires for subagents, workflow agents and teammates alike and hands the
 hook `agent_transcript_path`; each assistant record has `message.usage` and `message.id`

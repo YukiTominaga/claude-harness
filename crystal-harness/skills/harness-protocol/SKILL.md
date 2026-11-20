@@ -184,8 +184,8 @@ that agent's transcript**, and appends one JSON line:
 Three rules follow from how it is produced:
 
 - **Do not copy `subagent_tokens` from an Agent tool result anywhere.** It is the
-  size of the agent's *final* request, not its run — a two-request agent that
-  processed 42,996 tokens reports 21,689. The ledger is the only token figure to
+  size of the agent's *final* request, not its run — a three-request agent that
+  processed 64,685 tokens reports 21,689. The ledger is the only token figure to
   quote in the journal or to a human.
 - **Do not sum `ledger.jsonl` yourself.** An agent that stops more than once writes
   a cumulative snapshot each time, so the last line per `agentId` supersedes the

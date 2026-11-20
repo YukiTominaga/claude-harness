@@ -162,8 +162,8 @@ agent finishes — a subagent, a workflow agent or an agent-team teammate — an
 the usage of **every API request in that agent's transcript**. That is a
 deliberate change from recording the `subagent_tokens` figure the Agent tool
 returns, which turned out to be the size of the agent's *final* request rather
-than its run: measured on Claude Code 2.1.329, an agent that processed 42,996
-tokens over two requests reported 21,689. For a long generator session the gap is
+than its run: measured on Claude Code 2.1.329, an agent that processed 64,685
+tokens over three requests reported 21,689. For a long generator session the gap is
 orders of magnitude, and the earlier ledger understated every run by it. (The
 hook also has to wait a moment: Claude Code writes an agent's last response to the
 transcript about 100 ms after `SubagentStop` fires, so the hook holds until that
