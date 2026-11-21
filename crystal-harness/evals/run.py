@@ -4,8 +4,10 @@
     python3 evals/run.py                       # every case once, on the pinned models
     python3 evals/run.py --runs 3 --max-cost-usd 40
     python3 evals/run.py --case 'seeded-*'
+    python3 evals/run.py --case '*tracker*' --evaluator-model claude-sonnet-5-5
 
-What it measures. Each case hands the plugin's evaluator a small Notes API and
+What it measures. Each case hands the plugin's evaluator a small API — a Notes
+API, or a larger Tracker API whose defects take several steps to show — and
 asks for a final assessment. In a `seeded-*` case one known defect was put into
 an app that otherwise passes, behind a test suite that stays green; the case is
 **detected** when the verdict fails the round and names that defect among its
@@ -66,6 +68,11 @@ def make_copy(destination):
     return original
 
 
+def fixture_of(case_name):
+    """Which app a case is about: the tracker cases carry it in their name."""
+    return "tracker" if "-tracker-" in case_name else "notes"
+
+
 def summarize(result):
     """Per-run outcomes, and counts over the runs that actually produced a verdict.
 
@@ -75,10 +82,12 @@ def summarize(result):
     false alarm would turn a harness problem into a finding about the evaluator.
     """
     rows = []
-    counts = {"seeded": {"detected": 0, "valid": 0}, "clean": {"false_alarm": 0, "valid": 0}, "invalid": 0}
+    counts = {"seeded": {"detected": 0, "valid": 0}, "clean": {"false_alarm": 0, "valid": 0}, "invalid": 0,
+              "by_fixture": {}}
     for case in result.get("cases", []):
         name = case.get("name", "?")
         kind = "seeded" if name.startswith("seeded-") else "clean" if name.startswith("clean-") else "other"
+        fixture = counts["by_fixture"].setdefault(fixture_of(name), {"detected": 0, "seeded": 0, "false_alarm": 0, "clean": 0})
         for index, run in enumerate(case.get("arms", {}).get("with", []), 1):
             graders = {g.get("name"): g.get("passed") for g in run.get("graders", [])}
             if run.get("error") or run.get("aborted") or not graders.get("verdict-written"):
@@ -86,8 +95,10 @@ def summarize(result):
                 outcome = "INVALID — " + ("run error" if run.get("error") or run.get("aborted") else "no verdict was written")
             elif kind == "seeded":
                 counts["seeded"]["valid"] += 1
+                fixture["seeded"] += 1
                 if all(graders.values()):
                     counts["seeded"]["detected"] += 1
+                    fixture["detected"] += 1
                     outcome = "detected"
                 elif not graders.get("fails-the-round"):
                     outcome = "MISSED — passed the round"
@@ -95,10 +106,12 @@ def summarize(result):
                     outcome = "MISSED — failed the round without naming the defect"
             elif kind == "clean":
                 counts["clean"]["valid"] += 1
+                fixture["clean"] += 1
                 if all(graders.values()):
                     outcome = "passed"
                 else:
                     counts["clean"]["false_alarm"] += 1
+                    fixture["false_alarm"] += 1
                     outcome = "FALSE ALARM"
             else:
                 outcome = "passed" if all(graders.values()) else "failed"
@@ -115,13 +128,19 @@ def render(result, rows, counts, args, plugin_version):
         "",
         f"- Plugin: {plugin_version}   Claude Code: {result.get('claudeVersion', '?')}   run at: {result.get('startedAt', '?')}",
         f"- Runs per case: {args.runs}   main-session model: {args.model or 'default'}   "
-        "evaluator model and effort: as pinned in agents/harness-evaluator.md unless overridden by the environment",
+        + (f"evaluator model: **{args.evaluator_model}** (forced for this run; effort as pinned in agents/harness-evaluator.md)"
+           if args.evaluator_model else
+           "evaluator model and effort: as pinned in agents/harness-evaluator.md unless overridden by the environment"),
         f"- Estimated cost: ${result.get('costUsd', 0):.2f} (list price, from `claude plugin eval`)   "
         f"wall time: {result.get('durationSeconds', 0) / 60:.0f} min" + ("   **PARTIAL RUN**" if result.get("partial") else ""),
         "",
         f"**Seeded defects detected: {rate(counts['seeded']['detected'], counts['seeded']['valid'])}.**  ",
         f"**False alarms on clean apps: {rate(counts['clean']['false_alarm'], counts['clean']['valid'])}.**",
     ]
+    if len(counts["by_fixture"]) > 1:
+        lines += ["", "| fixture | seeded defects detected | false alarms on clean apps |", "| --- | --- | --- |"]
+        for fixture, c in sorted(counts["by_fixture"].items()):
+            lines.append(f"| {fixture} | {c['detected']}/{c['seeded']} | {c['false_alarm']}/{c['clean']} |")
     if counts["invalid"]:
         lines += [
             "",
@@ -149,6 +168,9 @@ def main():
     parser.add_argument("--runs", type=int, default=1, help="runs per case (default 1)")
     parser.add_argument("--case", default=None, help="only cases matching this glob")
     parser.add_argument("--model", default=None, help="model for the main session of each case")
+    parser.add_argument("--evaluator-model", default=None,
+                        help="force every subagent — here, the evaluator — onto this model instead of the one pinned "
+                             "in its frontmatter, to see whether the suite tells two evaluators apart")
     parser.add_argument("--max-cost-usd", type=float, default=None, help="stop launching runs past this estimated cost")
     parser.add_argument("--keep-copy", action="store_true", help="keep the temporary plugin copy for inspection")
     parser.add_argument("--keep-temp", action="store_true", help="keep each run's workspace and trace (passed to claude plugin eval)")
@@ -182,8 +204,14 @@ def main():
     if args.keep_temp:
         command += ["--keep-temp"]
 
+    env = dict(os.environ)
+    if args.evaluator_model:
+        # The agent's frontmatter pins a model; these two together override a pin.
+        env["CLAUDE_CODE_SUBAGENT_MODEL"] = args.evaluator_model
+        env["CLAUDE_CODE_SUBAGENT_MODEL_FORCE"] = "1"
+
     print(f"evaluating a copy of {plugin_version} as {COPY_NAME}; results in {out_dir}", flush=True)
-    proc = subprocess.run(command, cwd=copy)
+    proc = subprocess.run(command, cwd=copy, env=env)
     try:
         if not os.path.isfile(result_path):
             print(f"run.py: claude plugin eval exited {proc.returncode} and wrote no result", file=sys.stderr)

@@ -1,6 +1,6 @@
 ---
 description: "Seeded defect: DELETE of an id that does not exist returns 204 instead of 404."
-tags: [seeded]
+tags: [seeded, notes]
 max_turns: 40
 timeout_seconds: 3000
 allowed_tools: [Agent, Read, Bash, Write, Glob, Grep, Skill]

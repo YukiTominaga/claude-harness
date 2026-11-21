@@ -1,6 +1,6 @@
 ---
 description: "Seeded defect: Invalid JSON in a POST body returns 422; the spec says 400."
-tags: [seeded]
+tags: [seeded, notes]
 max_turns: 40
 timeout_seconds: 3000
 allowed_tools: [Agent, Read, Bash, Write, Glob, Grep, Skill]
