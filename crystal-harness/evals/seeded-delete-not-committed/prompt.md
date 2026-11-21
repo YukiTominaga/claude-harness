@@ -1,6 +1,6 @@
 ---
 description: "Seeded defect: DELETE returns 204 but the delete is rolled back; the note is still there."
-tags: [seeded]
+tags: [seeded, notes]
 max_turns: 40
 timeout_seconds: 3000
 allowed_tools: [Agent, Read, Bash, Write, Glob, Grep, Skill]

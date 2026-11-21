@@ -1,6 +1,6 @@
 ---
 description: "No seeded defect: A second, independently written implementation of the same spec."
-tags: [clean]
+tags: [clean, notes]
 max_turns: 40
 timeout_seconds: 3000
 allowed_tools: [Agent, Read, Bash, Write, Glob, Grep, Skill]

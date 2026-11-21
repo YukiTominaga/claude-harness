@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: seeded-tracker-total-counts-the-page
+context:
+  scaffold_script: fixture.sh
