@@ -732,6 +732,31 @@ run は `/clear`、クラッシュ、別のマシンへの移動を乗り越え�
 `journal.md` は、状態の再構築には意図的に*使いません*。人間向けのログで、すでに覆った決定も含んでいる
 からです。
 
+## evaluator を測る
+
+この節より下に書いてあるのは「どの部品を残すか」についての助言で、突き詰めれば問いは1つです。
+evaluator は、そこにあるものを見つけ、問題のないものには手を出さずにいられるか。`evals/` は
+これを直接測ります。
+
+```bash
+python3 crystal-harness/evals/run.py --runs 3
+```
+
+ケースは8つで、どれも小さな Notes API に対する final assessment です。うち6つは、合格したアプリに
+**既知の欠陥を1つだけ仕込んだもの**で、テストスイートは通ったままにしてあります(ロールバックされる
+書き込み、正常系と同じ応答を返すエラーパス、再起動でデータが消える、など)。欠陥を見つけるには、
+evaluator が指示されているとおり、プロダクトを実際に動かすしかありません。残り2つは問題のない
+アプリです。実行すると、仕込んだ欠陥のうちいくつを**検出**したか(verdict がラウンドを fail にし、
+*かつ* その欠陥を blocking issue の中で名指ししている)と、問題のないアプリにいくつ**誤検出**を
+出したかが報告されます。採点は `verdict.json` に対する正規表現で行い、モデルにモデルを採点させません。
+
+実行基盤は `claude plugin eval` です。必要なもの、注意点、ケースの足し方は `evals/README.md` に、
+現在のデフォルト設定で出た数字は `evals/BASELINE.md` にあります。
+
+これがあって初めて、次の節が使えるものになります。「evaluator の effort を下げる」「ルーブリックを
+削る」「並列評価をオンにする」は、どれも1つずつ変更して、再実行して、比べられるようになりました。
+1回のビルドから判断する必要はもうありません。
+
 ## モデルの進化に合わせて何を外すか
 
 ここにある部品はどれも「モデルが単独ではできないこと」についての前提を形にしたもので、その前提は
@@ -739,6 +764,9 @@ run は `/clear`、クラッシュ、別のマシンへの移動を乗り越え�
 スプリントという仕組みが不要になりました。このプラグインの generator と evaluator はそのクラスのモデル
 である `claude-opus-5-5` に固定しているので、デフォルト設定はすでにその「外す」判断を反映しています。
 以下は、すでに外したもの、まだ外していないもの、それぞれの根拠です。やることリストではありません。
+
+**印象ではなく、台帳と eval を使ってください。** 台帳は部品のコストを教えてくれます。
+`evals/run.py` は、変更を加えた後も evaluator が見つけるべきものを見つけているかを教えてくれます。
 
 **印象ではなく台帳を使ってください。** `/crystal-harness:status` でトークン、所要時間、エージェント別の
 割合が分かり、ラウンドごとのスコアを見れば、ラウンドを重ねることにまだ意味があるかが分かります。
@@ -870,6 +898,10 @@ crystal-harness/
 ├── workflows/
 │   ├── evaluate.js                      # 並列評価: 観点ごとに evaluator 1体、続いて issue の再現
 │   └── diagnose.js                      # 再発した issue: 証拠、3つの仮説、反証、診断
+├── evals/                               # evaluator 自身の eval: 欠陥入り6ケース、欠陥なし2ケース
+│   ├── run.py                           # 別名の複製に対して `claude plugin eval` を実行し、検出数と誤検出数を出す
+│   ├── _fixtures/                       # 問題のないアプリ2つ、仕込む欠陥、ケースの生成スクリプト
+│   └── <case>/{case.yaml,fixture.sh,prompt.md,graders/}
 ├── hooks/hooks.json
 ├── scripts/
 │   ├── guard_harness_artifacts.py       # PreToolUse hook が実行する担当範囲のポリシー
@@ -890,7 +922,8 @@ crystal-harness/
 │   ├── test_test_changes.py
 │   ├── test_merge_verdicts.py
 │   ├── test_team_build.py
-│   └── test_rules.py
+│   ├── test_rules.py
+│   └── test_eval_fixtures.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -911,6 +944,7 @@ python3 crystal-harness/scripts/test_test_changes.py
 python3 crystal-harness/scripts/test_merge_verdicts.py
 python3 crystal-harness/scripts/test_team_build.py
 python3 crystal-harness/scripts/test_rules.py
+python3 crystal-harness/scripts/test_eval_fixtures.py
 ```
 
 フレームワークも依存ライブラリも不要です。
@@ -961,7 +995,13 @@ hook がどんな不正な入力でも exit 0 で終わり、読めない transc
 すること、区分ごとの料金計算、0.10.0 より前の `state.json` のエントリをトークン合計に入れないこと、
 予算上限とそれを強制する hook。
 
-プロンプトではなくこの9つをテストしているのは、この9つが*気づかれないまま*壊れるからです。
+**eval のフィクスチャに 68 ケース**: すべてのフィクスチャを eval の実行時と同じ方法で組み立てて確認する。
+問題のないアプリは仕様どおりに動くこと、欠陥入りのアプリはスイートが通る一方で、確認用のプローブが
+その1つの欠陥だけを示すこと。グレーダーのパターンは、欠陥を名指しした verdict に一致し、別の理由で
+fail した verdict には一致しないこと。仕込みが気づかれないまま効かなくなると、「evaluator が
+バグを見逃した」と採点されてしまう。
+
+プロンプトではなくこの10個をテストしているのは、この10個が*気づかれないまま*壊れるからです。
 
 - contract の validator が拒否しなくなると、contract は再び上限を超えて膨らみ、run のすべての
   フェーズが遅く高くなる。

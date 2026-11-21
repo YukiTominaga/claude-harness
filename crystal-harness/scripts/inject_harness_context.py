@@ -63,14 +63,16 @@ def main():
     if phase == "blocked":
         action = (
             "The run is BLOCKED, waiting on a human decision. Do not resume it "
-            "yourself — use the crystal-harness:status skill to show the "
-            "current state and the blocking issue, then wait for the user's call."
+            "yourself. If the user has asked for something specific, do that; "
+            "otherwise use the crystal-harness:status skill to show the current "
+            "state and the blocking issue, then wait for the user's call."
         )
     else:
         action = (
-            "Use the crystal-harness:status skill first to show where the "
-            "run stands, then crystal-harness:resume if you are continuing "
-            "it (e.g. after a crash or /clear)."
+            "If the user has asked for something specific, do that — this note is "
+            "background, not a task. Otherwise the crystal-harness:status skill shows "
+            "where the run stands, and crystal-harness:resume continues it (e.g. after "
+            "a crash or /clear)."
         )
 
     emit(

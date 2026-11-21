@@ -133,6 +133,10 @@ came back before the generator tries again. And `rules.py` keeps what the projec
 evaluators have learned — an issue log, and human-approved rules that later rounds
 are checked against.
 
+`crystal-harness/evals/` measures the evaluator itself: six small apps with one known
+defect each and two sound ones, scored by whether the verdict names the defect or
+passes the sound app. It is how a change to any of the above is judged.
+
 With `teamBuild: true` the single generator of the first build becomes up to three
 `builder-<name>` teammates working at once, each confined by the guard to the
 paths a validated split plan gives it; `team_build.py` validates the plan, makes

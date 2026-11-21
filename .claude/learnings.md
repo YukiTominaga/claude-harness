@@ -202,3 +202,28 @@ Toy API whose DELETE never persisted, with a plausible failed fix already applie
 - Found by a test, not by a run: a rule's own keyword inside `.harness/rules.json` matched
   the rule as soon as the file was committed. Anything that reads a round's diff has to
   exclude `.harness/` — the harness's files are not the product.
+
+## 2026-11-20: `claude plugin eval` on this plugin — what it took
+Claude Code 2.1.329, in a root container where the plugin is also installed through
+managed settings:
+- **Granting Bash needs the OS sandbox backend.** Without `bubblewrap` and `socat` every
+  run is refused before it starts ("sandbox required but unavailable"). `apt-get install`
+  needed an `apt-get update` first.
+- **A managed install locks the plugin name inside eval too.** `claude plugin eval .` on the
+  working copy ran the plugin's hooks but offered none of its agents or skills
+  ("Agent type 'crystal-harness:harness-evaluator' not found"). The score was simply 0 —
+  no warning. Evaluating a renamed copy loads everything; `evals/run.py` does that.
+- A scaffold script gets `$0` as its real path in the case directory, so fixtures can be
+  shared files under `evals/` rather than heredocs repeated per case.
+- A localhost server started by a subagent's Bash is reachable from the same sandbox.
+- **As root, every sandboxed Bash call ends with `…/claude-0/cwd-XXXX: Read-only file
+  system` and exit code 1**, whatever the command did. Left unexplained, an evaluator can
+  read a passing test run as a failure. The case prompt explains it; a baseline taken as
+  root carries that caveat.
+- The plugin's guard works inside an eval run: it denied the evaluator a write to a source
+  file, with the denial text shown to the model.
+- YAML frontmatter in `prompt.md` rejects an unquoted value containing `: `, and when one
+  case file fails to parse, **no** case runs and the tool still writes a result with zero
+  cases — check the case count before reading a score.
+- `--no-publish` is needed to keep the HTML report local; publishing to claude.ai is the
+  default where the account supports it.

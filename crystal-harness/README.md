@@ -726,6 +726,33 @@ including whether a final assessment has passed — and waits for you to choose.
 `journal.md` is deliberately *not* used to reconstruct state. It is a human log and
 contains superseded decisions.
 
+## Measuring the evaluator
+
+Everything below this section is advice about which components to keep, and it all
+comes down to one question: does the evaluator find what is there, and leave alone
+what is sound? `evals/` measures that directly.
+
+```bash
+python3 crystal-harness/evals/run.py --runs 3
+```
+
+Eight cases, each a final assessment of a small Notes API. Six are an app that
+passed, with **one known defect put in** behind a test suite that stays green —
+a write that is rolled back, an error path that answers like the happy path, a
+restart that wipes the data, and so on — so the defect can only be found the way
+the evaluator is told to work, by exercising the product. Two are sound apps. The
+run reports how many seeded defects were **detected** (the verdict fails the round
+*and* names the defect among its blocking issues) and how many sound apps drew a
+**false alarm**. Grading is by regex over `verdict.json`; no model grades a model.
+
+It runs on `claude plugin eval`. `evals/README.md` has the requirements, the
+caveats and how to add a case; `evals/BASELINE.md` has the numbers the current
+defaults produced.
+
+This is what makes the next section usable. "Lower the evaluator's effort", "trim
+the rubric", "turn on parallel evaluation" are each one change you can now make,
+re-run, and compare — instead of deciding from one build.
+
 ## What to strip as models improve
 
 Every component here encodes an assumption about what the model cannot do alone, and
@@ -734,6 +761,10 @@ unnecessary once the model could sustain 2+ hour coherent sessions — this plug
 generator and evaluator are pinned to `claude-opus-5-5`, a model in that class, so the
 default configuration already reflects that stripping. What follows is what's already
 stripped, what still isn't, and the evidence for each — not a to-do list.
+
+**Use the ledger and the eval, not your impression.** The ledger says what a
+component cost; `evals/run.py` says whether the evaluator still finds what it
+should after you changed it.
 
 **Use the ledger, not your impression.** `/crystal-harness:status` gives you tokens, wall time
 and per-agent share; the per-round scores tell you whether rounds still buy anything.
@@ -862,6 +893,10 @@ crystal-harness/
 ├── workflows/
 │   ├── evaluate.js                      # parallel evaluation: one evaluator per lens, then reproductions
 │   └── diagnose.js                      # a recurring issue: evidence, three hypotheses, refutations, diagnosis
+├── evals/                               # the evaluator's own eval: 6 seeded-defect cases, 2 clean
+│   ├── run.py                           # runs `claude plugin eval` on a renamed copy, reports recall and false alarms
+│   ├── _fixtures/                       # two sound apps, the mutations, the case generator
+│   └── <case>/{case.yaml,fixture.sh,prompt.md,graders/}
 ├── hooks/hooks.json
 ├── scripts/
 │   ├── guard_harness_artifacts.py       # the ownership policy the PreToolUse hook runs
@@ -882,7 +917,8 @@ crystal-harness/
 │   ├── test_test_changes.py
 │   ├── test_merge_verdicts.py
 │   ├── test_team_build.py
-│   └── test_rules.py
+│   ├── test_rules.py
+│   └── test_eval_fixtures.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -903,6 +939,7 @@ python3 crystal-harness/scripts/test_test_changes.py
 python3 crystal-harness/scripts/test_merge_verdicts.py
 python3 crystal-harness/scripts/test_team_build.py
 python3 crystal-harness/scripts/test_rules.py
+python3 crystal-harness/scripts/test_eval_fixtures.py
 ```
 
 No framework and no dependencies.
@@ -959,7 +996,14 @@ recording an unreadable transcript as `null` rather than zero, per-category
 pricing, entries from a pre-0.10.0 `state.json` kept out of token totals, and the budget
 caps with the hook that enforces them.
 
-These nine are tested and the prompts are not, because these nine fail
+**68 cases over the eval fixtures**: every fixture built the way an eval run
+builds it — each sound app behaving as the spec says, each seeded app's suite
+passing while a probe shows exactly its one defect — and every grader pattern
+matching a verdict that names the defect and ignoring one that fails for another
+reason. A mutation that silently stopped applying would otherwise be scored as
+the evaluator missing a bug.
+
+These ten are tested and the prompts are not, because these ten fail
 *silently*. If the rule matcher stops triggering a rule, the evaluator is never
 asked the question the rule exists to ask. If the split-plan validator starts accepting overlapping paths, the
 build still completes — with one builder's work replaced by another's. If the test-change report stops noticing a deleted test, the suite
