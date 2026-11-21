@@ -72,7 +72,14 @@ chosen for having been missed once measures luck:
 | `PATCH` stores tags without normalising them | a second path to a field: creation normalises, and that is the path that gets tested |
 
 Each is an omission — a check or a clause that is not there — so the code that
-remains reads as plausible. The decoys are the mirror image: deletes that no
+remains reads as plausible. And the spec does not hand over the probe. It states
+each rule once, as something that always holds — "`completed_at` is null unless
+the status is `done`", "an archived project never gains a task", "blocking
+relations never form a cycle" — not endpoint by endpoint, so which requests could
+break a rule is for the evaluator to work out. The first draft of this spec
+spelled the three-task cycle out as an example, and a trial run found that defect
+in two minutes: a spec that reads like a test plan measures whether the evaluator
+can follow one. The decoys are the mirror image: deletes that no
 longer name the dependent rows because foreign keys cascade, an archive check
 that moved from Python into the `UPDATE`, a `CASE` with no `ELSE`. An evaluator
 that fails a round on how code looks, without observing a failure, fails that
