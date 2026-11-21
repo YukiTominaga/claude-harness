@@ -13,6 +13,7 @@ import os
 import re
 import sqlite3
 import sys
+import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -133,7 +134,7 @@ def validate_priority(value):
 
 
 def validate_tags(value):
-    """Check the shape of a tags array; return its entries trimmed."""
+    """Check a tags array against the limits; return its entries trimmed."""
     if not isinstance(value, list) or len(value) > TAGS_MAX:
         raise Invalid(f"tags must be an array of at most {TAGS_MAX} strings")
     tags = []
@@ -141,8 +142,9 @@ def validate_tags(value):
         if not isinstance(tag, str):
             raise Invalid("every tag must be a string")
         tag = tag.strip()
-        if not 1 <= len(tag) <= TAG_MAX:
-            raise Invalid(f"every tag must be 1-{TAG_MAX} characters after trimming")
+        # the limit is on the form a tag is held in, and lower-casing can lengthen a string
+        if not 1 <= len(tag.lower()) <= TAG_MAX:
+            raise Invalid(f"every tag must be 1-{TAG_MAX} characters after trimming and lower-casing")
         tags.append(tag)
     return tags
 
@@ -479,7 +481,9 @@ class TrackerHandler(BaseHTTPRequestHandler):
     def _json_object(self):
         try:
             payload = json.loads(self._raw.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
+            # an escaped lone surrogate parses, but is not text that can be stored or sent back
+            json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        except (UnicodeError, ValueError):
             raise BadRequest("request body is not valid JSON")
         return require_object(payload)
 
@@ -508,15 +512,23 @@ class TrackerHandler(BaseHTTPRequestHandler):
         except ApiError as exc:
             self._send(exc.status, {"error": str(exc)})
         except Exception as exc:  # a bug, not a client error: say so instead of dropping the connection
+            self.log_error("unhandled error on %s %s\n%s", self.command, self.path, traceback.format_exc())
             self._send(500, {"error": f"internal error: {type(exc).__name__}"})
 
-    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _handle
+    def __getattr__(self, name):
+        # http.server looks up do_<METHOD> and answers 501 in HTML when there is none;
+        # answering for every method keeps an unknown one on the 404/405 path above.
+        if name.startswith("do_"):
+            return self._handle
+        raise AttributeError(name)
 
     # -- projects ----------------------------------------------------------
 
     def _get_projects(self):
-        include_archived = self._query().get("include_archived") == "true"
-        self._send(200, self.store.list_projects(include_archived))
+        include_archived = self._query().get("include_archived", "false")
+        if include_archived not in ("true", "false"):
+            raise Invalid("include_archived must be true or false")
+        self._send(200, self.store.list_projects(include_archived == "true"))
 
     def _post_projects(self):
         payload = self._json_object()

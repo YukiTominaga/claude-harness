@@ -196,6 +196,8 @@ def observe_tracker(root):
         facts["task_stayed_where_it_was"] = get(f"/tasks/{mover}")["project_id"] == alpha["id"]
         facts["move_status"] = post(f"/tasks/{mover}/move", {"project_id": beta["id"]})[0]
         facts["listed_projects"] = [p["name"] for p in get("/projects")]
+        facts["bad_include_archived_status"] = server.call("GET", "/projects?include_archived=yes")[0]
+        facts["tag_longer_when_lowercased_status"] = post(f"/projects/{alpha['id']}/tasks", {"title": "t", "tags": ["\u0130" * 20]})[0]
 
         # deleting a project whose task something else waits on
         waiter = task(alpha)["id"]
@@ -243,6 +245,7 @@ SOUND_TRACKER = {
     "task_stayed_where_it_was": True, "move_status": 200, "listed_projects": ["Alpha", "Beta"],
     "delete_project_status": 204, "task_of_deleted_project_status": 404, "blocked_by_after_project_deleted": [],
     "rows_left_behind": 0, "survives_restart": True,
+    "bad_include_archived_status": 422, "tag_longer_when_lowercased_status": 422,
 }
 
 
@@ -268,6 +271,7 @@ BROKEN = {
     "seeded-tracker-indirect-cycle-accepted": {"indirect_cycle_status": 200},
     "seeded-tracker-total-counts-the-page": {"total_beyond_the_page": 2},
     "seeded-tracker-patch-tags-not-normalised": {"patched_tags": ["Later", "LATER", "Home"], "tag_filter_finds_patched": False},
+    "seeded-tracker-tag-length-before-lower-casing": {"tag_longer_when_lowercased_status": 201},
 }
 
 
@@ -344,6 +348,10 @@ NAMED = {
     "seeded-tracker-patch-tags-not-normalised": [
         "PATCH /tasks/{id} stores tags without lower-casing them, so ?tag= no longer finds the task",
         "Duplicate and upper-case tags survive a PATCH; only creation normalises the tags array",
+    ],
+    "seeded-tracker-tag-length-before-lower-casing": [
+        "Tag length is checked before lower-casing, so a tag whose lower-case form is longer than 20 characters is stored",
+        "20 x U+0130 is accepted with 201 and held as a 40-character tag: the limit is applied before the tag is lower-cased",
     ],
 }
 UNRELATED = "The test suite covers only the happy path of creating a note, so nothing guards the remaining behaviour"

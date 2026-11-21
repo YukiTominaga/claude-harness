@@ -109,6 +109,9 @@ class ProjectTests(ApiTest):
         self.assertEqual(status, 200)
         self.assertEqual([p["name"] for p in everything], ["A", "B", "C"])
         self.assertEqual([p["archived"] for p in everything], [False, True, False])
+        self.assertEqual([p["name"] for p in self.call("GET", "/projects?include_archived=false")[1]], ["A", "C"])
+        for value in ("", "1", "yes", "TRUE", "banana"):
+            self.assertEqual(self.call("GET", f"/projects?include_archived={value}")[0], 422, value)
 
     def test_get_one_and_unknown(self):
         project = self.project()
@@ -204,6 +207,15 @@ class TaskTests(ApiTest):
         task = self.task(project["id"], tags=[" Urgent ", "home", "URGENT", "Home", "b"])
         self.assertEqual(task["tags"], ["urgent", "home", "b"])
         self.assertEqual(self.call("GET", f"/tasks/{task['id']}")[1]["tags"], ["urgent", "home", "b"])
+
+    def test_tag_length_is_measured_after_lower_casing(self):
+        project = self.project()
+        grows = "\u0130" * 20  # each becomes two characters when lower-cased
+        self.assertEqual(self.call("POST", f"/projects/{project['id']}/tasks", {"title": "t", "tags": [grows]})[0], 422)
+        task = self.task(project["id"], tags=["\u0130" * 10])
+        self.assertEqual([len(tag) for tag in task["tags"]], [20])
+        self.assertEqual(self.call("PATCH", f"/tasks/{task['id']}", {"tags": [grows]})[0], 422)
+        self.assertEqual(self.rows("SELECT MAX(LENGTH(tag)) FROM task_tags")[0][0], 20)
 
     def test_patch_changes_only_what_is_sent(self):
         project = self.project()
@@ -432,6 +444,14 @@ class ProtocolTests(ApiTest):
             for raw in (b"[]", b'"x"', b"3", b"null"):
                 self.assertEqual(self.call(method, path, raw=raw)[0], 422, (path, raw))
 
+    def test_text_that_is_not_unicode_is_400(self):
+        project = self.project()
+        lone = b'"\\ud800"'
+        self.assertEqual(self.call("POST", "/projects", raw=b'{"name": ' + lone + b"}")[0], 400)
+        for body in (b'{"title": ' + lone + b"}", b'{"title": "t", "tags": [' + lone + b"]}"):
+            self.assertEqual(self.call("POST", f"/projects/{project['id']}/tasks", raw=body)[0], 400, body)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM tasks")[0][0], 0)
+
     def test_unknown_paths_are_404_and_unsupported_methods_405(self):
         project = self.project()
         task = self.task(project["id"])
@@ -443,6 +463,9 @@ class ProtocolTests(ApiTest):
                    ("POST", f"/tasks/{task['id']}/blockers/{task['id']}")]
         for method, path in refused:
             self.assertEqual(self.call(method, path)[0], 405, (method, path))
+        # a method the server has never heard of takes the same two answers
+        self.assertEqual(self.call("FOO", "/projects")[0], 405)
+        self.assertEqual(self.call("FOO", "/nowhere")[0], 404)
 
 
 class PersistenceTests(ApiTest):

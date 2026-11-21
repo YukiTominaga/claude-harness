@@ -23,7 +23,7 @@ What is said here holds at all times, whichever request last touched the record.
 
 ### Projects
 - `POST /projects` with `{name}` creates a project and returns it with status 201.
-- `GET /projects` lists the projects that are not archived, in creation order. `GET /projects?include_archived=true` lists the archived ones as well.
+- `GET /projects` lists the projects that are not archived, in creation order. `include_archived` is `true` or `false` (the default); with `true` the archived ones are listed as well.
 - `GET /projects/{id}` returns one project.
 - `POST /projects/{id}/archive` archives the project and returns it with status 200. Archiving an archived project is also 200.
 - `DELETE /projects/{id}` returns 204 and permanently removes the project and every task in it.
@@ -52,7 +52,7 @@ What is said here holds at all times, whichever request last touched the record.
 - Projects, tasks, tags and blocking relations persist across a restart of the server.
 
 ## Status codes
-- 400: the request body is not valid JSON.
+- 400: the request body is not valid JSON, or holds text that is not valid Unicode.
 - 404: an id in the path, or a `project_id` in the body of a move, matches no project or task; or the path is one the API does not have.
 - 405: a path the API has, with a method it does not support there.
 - 409: the request is well-formed, but what it asks for would break a rule above — a name that is taken, a move the workflow refuses, anything the data model says never happens. Nothing changes.

@@ -77,7 +77,12 @@ TRACKER_SEEDED = {
     ),
     "patch-tags-not-normalised": (
         "PATCH stores tags as sent — not lower-cased, duplicates kept — so a tag filter misses them.",
-        r"\btags?\b[\s\S]{0,300}(?:lower|upper|normali[sz]|\bcase|dedup|duplicat)|(?:lower|upper|normali[sz]|\bcase|dedup|duplicat)[\s\S]{0,300}\btags?\b",
+        r"(?:PATCH|updat\w*)[\s\S]{0,300}(?:lower|upper|normali[sz]|\bcase|dedup|duplicat)|(?:lower|upper|normali[sz]|\bcase|dedup|duplicat)[\s\S]{0,300}(?:PATCH|updat)",
+    ),
+    # Found by the evaluator in the first measured run, not designed: see mutate.py.
+    "tag-length-before-lower-casing": (
+        "A tag's length is checked before it is lower-cased, so one that grows when lower-cased is stored over the limit.",
+        r"(?:length|longer than|characters|over-?long|\blimit)[\s\S]{0,300}lower|lower[\s\S]{0,300}(?:length|longer than|characters|over-?long|\blimit)",
     ),
 }
 TRACKER_CLEAN = {

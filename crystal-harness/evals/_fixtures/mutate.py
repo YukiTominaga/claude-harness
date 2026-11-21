@@ -126,6 +126,19 @@ TRACKER_DEFECTS = {
         '''            changes["tags"] = normalise_tags(validate_tags(payload["tags"]))''',
         '''            changes["tags"] = validate_tags(payload["tags"])''',
     ),
+    # This one was not designed. It was in the first version of this app, written
+    # to be sound; its author and its 35 tests missed it, and the evaluator
+    # reported it in six of the first eight measured runs. Fixed in the base, and
+    # kept here as a case.
+    # Needs a character whose lower-case form is longer than itself — nobody's
+    # default test string — against a limit that every ordinary tag respects.
+    "tag-length-before-lower-casing": (
+        '''        # the limit is on the form a tag is held in, and lower-casing can lengthen a string
+        if not 1 <= len(tag.lower()) <= TAG_MAX:
+            raise Invalid(f"every tag must be 1-{TAG_MAX} characters after trimming and lower-casing")''',
+        '''        if not 1 <= len(tag) <= TAG_MAX:
+            raise Invalid(f"every tag must be 1-{TAG_MAX} characters after trimming")''',
+    ),
 }
 
 TRACKER_DECOYS = {
