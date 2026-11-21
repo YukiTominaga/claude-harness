@@ -10,49 +10,53 @@ A JSON API for keeping projects and the tasks inside them: tasks move through a 
 - One HTTP API on 127.0.0.1:8765, started with `python3 app.py`. Data lives in a SQLite file, `./tracker.db`.
 
 ## Data model
+What is said here holds at all times, whichever request last touched the record.
+
 - **Project**: `id` (integer, assigned by the server), `name` (text, 1–60 characters after trimming, unique among all projects ignoring case), `archived` (boolean, false when created), `created_at`, and `task_counts` — an object `{todo, doing, done}` with the number of the project's tasks in each status. Every response that carries a project carries all of these.
-- **Task**: `id` (integer, assigned by the server), `project_id`, `title` (text, 1–120 characters after trimming), `status` (`todo`, `doing` or `done`; `todo` when created), `priority` (integer 1–5, 3 when omitted), `tags` (array of text, empty when omitted), `blocked_by` (array of the ids of the tasks this one waits on, ascending), `completed_at` (a timestamp while the status is `done`, otherwise null), `created_at`. Every response that carries a task carries all of these.
-- **Tags**: sent as an array of at most 5 strings. Each is trimmed and lower-cased and must then be 1–20 characters long; a tag that repeats an earlier one after that is dropped. What is stored and returned is the result, in the order sent.
+- An archived project stays archived, and never gains a task. The tasks already in it can still be read, changed, moved out and deleted.
+- **Task**: `id` (integer, assigned by the server), `project_id`, `title` (text, 1–120 characters after trimming), `status` (`todo`, `doing` or `done`; `todo` when created), `priority` (integer 1–5, 3 when omitted), `tags`, `blocked_by`, `completed_at`, `created_at`. Every response that carries a task carries all of these.
+- `tags` is an array of text, empty when omitted. Tags are sent as an array of at most 5 strings; each is trimmed and lower-cased and must then be 1–20 characters long, and a tag that repeats an earlier one after that is dropped. A task's tags are always held and returned in that form, in the order sent.
+- `blocked_by` is the ids of the tasks this one waits on, ascending. They are always tasks that exist. A task never waits on itself, and blocking relations never form a cycle.
+- `completed_at` is a timestamp while the status is `done`, and null otherwise.
 
 ## Behaviour and states
 
 ### Projects
-- `POST /projects` with `{name}` creates a project and returns it with status 201. An invalid name is 422; a name another project already has, ignoring case, is 409.
+- `POST /projects` with `{name}` creates a project and returns it with status 201.
 - `GET /projects` lists the projects that are not archived, in creation order. `GET /projects?include_archived=true` lists the archived ones as well.
 - `GET /projects/{id}` returns one project.
-- `POST /projects/{id}/archive` archives the project and returns it with status 200. Archiving an archived project is also 200. There is no way to un-archive.
-- An archived project accepts no new tasks: creating a task in it, or moving a task into it, is 409. The tasks already in it can still be read, changed, moved out and deleted.
-- `DELETE /projects/{id}` returns 204 and permanently removes the project, every task in it, and every blocking relation those tasks were part of — a task in another project that was waiting on one of them no longer is.
+- `POST /projects/{id}/archive` archives the project and returns it with status 200. Archiving an archived project is also 200.
+- `DELETE /projects/{id}` returns 204 and permanently removes the project and every task in it.
 
 ### Tasks
-- `POST /projects/{id}/tasks` with `{title, priority?, tags?}` creates a task in that project and returns it with status 201. Invalid input is 422 and nothing is stored.
+- `POST /projects/{id}/tasks` with `{title, priority?, tags?}` creates a task in that project and returns it with status 201.
 - `GET /tasks/{id}` returns one task.
-- `PATCH /tasks/{id}` with any of `{title, priority, tags}` changes those fields, under the same rules as creation, and returns the task with status 200. A body with any other field, or with none of the three, is 422 and nothing changes. `status` and `project_id` are not changed this way.
-- `DELETE /tasks/{id}` returns 204 and permanently removes the task and every blocking relation it was part of: the tasks that were waiting on it no longer are.
-- `POST /tasks/{id}/move` with `{project_id}` moves the task to that project and returns it with status 200. A `project_id` that is not an integer is 422.
+- `PATCH /tasks/{id}` with any of `{title, priority, tags}` changes those fields and returns the task with status 200. A body with any other field, or with none of the three, is 422. `status` and `project_id` are not changed this way.
+- `DELETE /tasks/{id}` returns 204 and permanently removes the task.
+- `POST /tasks/{id}/move` with `{project_id}` moves the task to that project and returns it with status 200. Moving a task to the project it is already in changes nothing and is 200.
 
 ### Listing tasks
-- `GET /tasks` returns `{"items": [...], "total": n}`. `items` is sorted by priority, highest first, and within one priority by id, ascending.
+- `GET /tasks` returns `{"items": [...], "total": n}`. `items` is sorted by priority, highest first, and within one priority by id, ascending. `total` is the number of tasks that match the filters.
 - Filters, all optional and combined with AND: `project_id` (an integer; one that matches no project gives an empty list), `status` (one of the three), `tag` (trimmed and lower-cased before matching; a task matches when it carries that tag).
-- Paging: `limit` (integer 1–100, 20 when omitted) and `offset` (integer 0 or more, 0 when omitted). `total` is the number of tasks that match the filters, whatever `limit` and `offset` are.
-- A `status` that is not one of the three, a `project_id` that is not an integer, or a `limit` or `offset` outside its range is 422.
+- Paging: `limit` (integer 1–100, 20 when omitted) and `offset` (integer 0 or more, 0 when omitted).
 
 ### Workflow
-- `POST /tasks/{id}/transition` with `{to}` changes the status and returns the task with status 200. The allowed moves are `todo → doing`, `doing → done`, `doing → todo`, and `done → doing` (re-opening). Any other move, including to the status the task already has, is 409 and nothing changes. A `to` that is not one of the three statuses is 422.
-- Entering `done` sets `completed_at`; leaving `done` sets it back to null.
+- `POST /tasks/{id}/transition` with `{to}` changes the status and returns the task with status 200. The allowed moves are `todo → doing`, `doing → done`, `doing → todo`, and `done → doing` (re-opening). Any other move, including to the status the task already has, is refused.
+- A task cannot enter `done` while a task it waits on is not `done`. Re-opening a task does not change tasks that are already `done`.
 
 ### Blocking
 - `PUT /tasks/{id}/blockers/{blocker_id}` records that the task waits on the blocker and returns the task with status 200. Doing it again is also 200 and changes nothing. The two tasks may be in different projects.
-- A task cannot wait on itself, and blocking relations never form a cycle of any length (A waits on B, B on C, C on A): a request that would create one is 409 and nothing changes.
 - `DELETE /tasks/{id}/blockers/{blocker_id}` removes the relation and returns 204; 404 when the task is not waiting on that blocker.
-- A task cannot enter `done` while any task it waits on is not `done`: the transition is 409. Re-opening a blocker afterwards does not change tasks that are already `done`.
 
 ### Persistence
 - Projects, tasks, tags and blocking relations persist across a restart of the server.
 
-## Edge cases
-- A request body that is not valid JSON is 400. Valid JSON that is not an object is 422.
-- An id in a path that matches no project or task is 404; so is a `project_id` in the body of a move. A path the API does not have is 404. A path the API has, with a method it does not support there, is 405.
+## Status codes
+- 400: the request body is not valid JSON.
+- 404: an id in the path, or a `project_id` in the body of a move, matches no project or task; or the path is one the API does not have.
+- 405: a path the API has, with a method it does not support there.
+- 409: the request is well-formed, but what it asks for would break a rule above — a name that is taken, a move the workflow refuses, anything the data model says never happens. Nothing changes.
+- 422: the request is malformed — the body is valid JSON but not an object, a field is missing or of the wrong type or outside its range, a query parameter is not one of its allowed values. Nothing changes.
 
 ## Non-goals
 - No authentication, no user interface, no renaming of projects, no un-archiving, no due dates, no comments.

@@ -72,6 +72,10 @@ NOTES_DEFECTS = {
 # The tracker's defects are harder on purpose. None shows on the first request to
 # an endpoint: each needs a particular sequence, a second resource, or enough
 # data — and each is an omission, so the code that is left reads as plausible.
+# The spec does not hand over the probe either: it states each rule once, as
+# something that always holds ("completed_at is null unless the status is done",
+# "an archived project never gains a task"), not endpoint by endpoint. Which
+# requests could break the rule is for the evaluator to work out.
 TRACKER_DEFECTS = {
     # Order of operations: only visible after done -> doing, and only in one field.
     "reopen-keeps-completed-at": (
@@ -81,11 +85,13 @@ TRACKER_DEFECTS = {
     # Two features meeting: the archive rule is enforced on create, not on move.
     "move-into-archived-project": (
         '''            project = self._require_project(conn, project_id)
-            if project["archived"]:
-                raise Conflict("the target project is archived")
-            conn.execute("UPDATE tasks SET project_id = ? WHERE id = ?", (project_id, task_id))''',
+            if task["project_id"] != project_id:
+                if project["archived"]:
+                    raise Conflict("the target project is archived")
+                conn.execute("UPDATE tasks SET project_id = ? WHERE id = ?", (project_id, task_id))''',
         '''            self._require_project(conn, project_id)
-            conn.execute("UPDATE tasks SET project_id = ? WHERE id = ?", (project_id, task_id))''',
+            if task["project_id"] != project_id:
+                conn.execute("UPDATE tasks SET project_id = ? WHERE id = ?", (project_id, task_id))''',
     ),
     # Four steps: block, delete the blocker, then try to finish what was waiting.
     "deleted-blocker-still-blocks": (
@@ -178,17 +184,19 @@ TRACKER_DECOYS = {
     "decoy-move-check-in-sql": [
         (
             '''            project = self._require_project(conn, project_id)
-            if project["archived"]:
-                raise Conflict("the target project is archived")
-            conn.execute("UPDATE tasks SET project_id = ? WHERE id = ?", (project_id, task_id))''',
+            if task["project_id"] != project_id:
+                if project["archived"]:
+                    raise Conflict("the target project is archived")
+                conn.execute("UPDATE tasks SET project_id = ? WHERE id = ?", (project_id, task_id))''',
             '''            self._require_project(conn, project_id)
-            moved = conn.execute(
-                "UPDATE tasks SET project_id = ?1 WHERE id = ?2"
-                " AND NOT EXISTS (SELECT 1 FROM projects WHERE id = ?1 AND archived = 1)",
-                (project_id, task_id),
-            ).rowcount
-            if not moved:
-                raise Conflict("the target project is archived")''',
+            if task["project_id"] != project_id:
+                moved = conn.execute(
+                    "UPDATE tasks SET project_id = ?1 WHERE id = ?2"
+                    " AND NOT EXISTS (SELECT 1 FROM projects WHERE id = ?1 AND archived = 1)",
+                    (project_id, task_id),
+                ).rowcount
+                if not moved:
+                    raise Conflict("the target project is archived")''',
         ),
     ],
     # A CASE with no ELSE: it yields NULL, which is what leaving `done` needs.

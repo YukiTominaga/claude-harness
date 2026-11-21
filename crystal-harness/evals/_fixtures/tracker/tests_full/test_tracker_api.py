@@ -145,6 +145,7 @@ class ProjectTests(ApiTest):
         self.assertEqual(self.call("GET", f"/tasks/{outside['id']}")[1]["project_id"], other["id"])
         # what is already inside can be read, changed, moved out and deleted
         self.assertEqual(self.call("PATCH", f"/tasks/{inside['id']}", {"title": "renamed"})[0], 200)
+        self.assertEqual(self.call("POST", f"/tasks/{inside['id']}/move", {"project_id": project["id"]})[0], 200)
         self.go(inside["id"], "doing")
         status, moved = self.call("POST", f"/tasks/{inside['id']}/move", {"project_id": other["id"]})
         self.assertEqual((status, moved["project_id"]), (200, other["id"]))

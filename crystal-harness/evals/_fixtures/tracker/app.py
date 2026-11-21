@@ -366,11 +366,12 @@ class Store:
 
     def move_task(self, task_id, project_id):
         with self._transaction(write=True) as conn:
-            self._require_task(conn, task_id)
+            task = self._require_task(conn, task_id)
             project = self._require_project(conn, project_id)
-            if project["archived"]:
-                raise Conflict("the target project is archived")
-            conn.execute("UPDATE tasks SET project_id = ? WHERE id = ?", (project_id, task_id))
+            if task["project_id"] != project_id:
+                if project["archived"]:
+                    raise Conflict("the target project is archived")
+                conn.execute("UPDATE tasks SET project_id = ? WHERE id = ?", (project_id, task_id))
             return self._task(conn, self._require_task(conn, task_id))
 
     # -- workflow ----------------------------------------------------------
