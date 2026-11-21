@@ -133,7 +133,7 @@ came back before the generator tries again. And `rules.py` keeps what the projec
 evaluators have learned — an issue log, and human-approved rules that later rounds
 are checked against.
 
-`crystal-harness/evals/` measures the evaluator itself: twelve apps with one known
+`crystal-harness/evals/` measures the evaluator itself: thirteen apps with one known
 defect each and four sound ones — half of them small, half large enough that the
 defect takes several steps to show — scored by whether the verdict names the defect
 or passes the sound app. It is how a change to any of the above is judged.

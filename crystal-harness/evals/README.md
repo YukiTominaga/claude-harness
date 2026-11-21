@@ -16,13 +16,13 @@ python3 evals/run.py --evaluator-model claude-sonnet-5-5   # the same cases, ano
 It prints, and writes to `evals/results/<timestamp>/summary.md`:
 
 ```
-Seeded defects detected: 10/12 (83%).
+Seeded defects detected: 11/13 (85%).
 False alarms on clean apps: 0/4 (0%).
 
 | fixture | seeded defects detected | false alarms on clean apps |
 | --- | --- | --- |
 | notes | 6/6 | 0/2 |
-| tracker | 4/6 | 0/2 |
+| tracker | 5/7 | 0/2 |
 ```
 
 alongside `result.json` and `report.html` from `claude plugin eval`.
@@ -48,14 +48,14 @@ edge case with the wrong status, and a field that is accepted and thrown away.
 Each shows on the first request to the endpoint it lives in.
 
 **Tracker** — projects and tasks, a `todo`/`doing`/`done` workflow, tasks that wait
-on other tasks, filters and paging, archiving, moving and deleting; about 640
+on other tasks, filters and paging, archiving, moving and deleting; about 660
 lines and a spec of some thirty rules. Trying everything once is no longer a
 plan, and that is the point: these cases are here so the suite can tell a better
 evaluator from a worse one.
 
 | Cases | Fixture | Correct verdict |
 | --- | --- | --- |
-| `seeded-tracker-*` (6) | the app with **one** defect put in, behind a thin suite that stays green | `fail`, naming the defect |
+| `seeded-tracker-*` (7) | the app with **one** defect put in, behind a thin suite that stays green | `fail`, naming the defect |
 | `clean-tracker-full-suite` | the app untouched, with its full suite | `pass`, no blocking issue |
 | `clean-tracker-decoys` | the app rewritten in three places to **read** like a defect while behaving the same | `pass`, no blocking issue |
 
@@ -70,6 +70,16 @@ chosen for having been missed once measures luck:
 | a three-task cycle of blocking is accepted | three tasks; the two-task cycle anyone tries first is refused |
 | `total` is the size of the page | more matching tasks than the page holds; with everything on one page it is right |
 | `PATCH` stores tags without normalising them | a second path to a field: creation normalises, and that is the path that gets tested |
+| a tag's length is checked before it is lower-cased | a character whose lower-case form is longer than itself, against a limit every ordinary tag respects |
+
+The last one was not designed. It was in the Tracker as first written — an app
+meant to be sound, with 35 passing tests — and the evaluator reported it in six
+of the first eight measured runs, failing both "clean" cases correctly. It is
+fixed in the base app and kept as a case: of everything here it is the one a
+person demonstrably missed. A second defect found the same way (any value of
+`include_archived` was taken as `false`) is fixed but is **not** a case: the
+evaluator called it non-blocking in five runs of eight, and a case whose correct
+verdict is arguable measures a judgement of severity, not detection.
 
 Each is an omission — a check or a clause that is not there — so the code that
 remains reads as plausible. And the spec does not hand over the probe. It states
@@ -130,7 +140,7 @@ next to its mutation, before running it.
 The point of the numbers is to make a change to the harness arguable. Change
 **one** thing — an effort level in an agent's frontmatter, a section of a prompt,
 `parallelEvaluation` in `_fixtures/setup.sh` — run the suite with `--runs 3` or
-more before and after, and compare. Sixteen cases are few: a difference of one
+more before and after, and compare. Seventeen cases are few: a difference of one
 case is noise until it repeats.
 
 `--evaluator-model <id>` runs the same cases with every subagent — here, the
