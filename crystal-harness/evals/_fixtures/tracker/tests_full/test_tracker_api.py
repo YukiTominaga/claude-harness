@@ -447,6 +447,33 @@ class ProtocolTests(ApiTest):
             for raw in (b"[]", b'"x"', b"3", b"null"):
                 self.assertEqual(self.call(method, path, raw=raw)[0], 422, (path, raw))
 
+    def test_nan_and_infinity_are_not_json(self):
+        project = self.project()
+        for constant in (b"NaN", b"Infinity", b"-Infinity"):
+            self.assertEqual(self.call("POST", "/projects", raw=b'{"name": "x", "extra": ' + constant + b"}")[0], 400)
+            body = b'{"title": "t", "priority": ' + constant + b"}"
+            self.assertEqual(self.call("POST", f"/projects/{project['id']}/tasks", raw=body)[0], 400)
+        self.assertEqual(len(self.call("GET", "/projects")[1]), 1)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM tasks")[0][0], 0)
+
+    def test_integers_of_any_length_are_only_out_of_range(self):
+        project = self.project()
+        task = self.task(project["id"])
+        huge = "9" * 5000
+        self.assertEqual(self.call("GET", f"/tasks/{huge}")[0], 404)
+        self.assertEqual(self.call("GET", f"/projects/{huge}")[0], 404)
+        self.assertEqual(self.call("PUT", f"/tasks/{task['id']}/blockers/{huge}")[0], 404)
+        self.assertEqual(self.call("DELETE", f"/tasks/{task['id']}/blockers/{huge}")[0], 404)
+        self.assertEqual(self.call("GET", f"/tasks?limit={huge}")[0], 422)
+        self.assertEqual(self.call("GET", f"/tasks?offset={huge}")[1], {"items": [], "total": 1})
+        self.assertEqual(self.call("GET", f"/tasks?project_id={huge}")[1], {"items": [], "total": 0})
+        self.assertEqual(self.call("GET", f"/tasks?project_id=-{huge}")[1], {"items": [], "total": 0})
+        self.assertEqual(self.call("GET", f"/tasks?limit={'0' * 5000}5")[1]["total"], 1)
+        raw = lambda text: text.encode("ascii")  # noqa: E731
+        self.assertEqual(self.call("POST", f"/projects/{project['id']}/tasks", raw=raw('{"title": "t", "priority": %s}' % huge))[0], 422)
+        self.assertEqual(self.call("POST", f"/tasks/{task['id']}/move", raw=raw('{"project_id": %s}' % huge))[0], 404)
+        self.assertEqual(self.call("POST", f"/tasks/{task['id']}/move", raw=raw('{"project_id": -%s}' % huge))[0], 404)
+
     def test_text_that_is_not_unicode_is_400(self):
         project = self.project()
         lone = b'"\\ud800"'

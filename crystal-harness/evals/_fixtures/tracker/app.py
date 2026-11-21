@@ -114,6 +114,21 @@ def require_object(payload):
     return payload
 
 
+def to_int(digits):
+    """int() for a run of digits of any length. Python refuses to convert more
+    than 4300 digits; past 19 the value is outside every range used here, so
+    all that matters is that it stays outside."""
+    negative = digits.startswith("-")
+    significant = digits.lstrip("-").lstrip("0") or "0"
+    value = int(significant) if len(significant) <= 19 else SQLITE_MAX_INT + 1
+    return -value if negative else value
+
+
+def not_json(constant):
+    """json.loads accepts NaN, Infinity and -Infinity; JSON does not have them."""
+    raise ValueError(f"{constant} is not valid JSON")
+
+
 def is_integer(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -480,7 +495,7 @@ class TrackerHandler(BaseHTTPRequestHandler):
 
     def _json_object(self):
         try:
-            payload = json.loads(self._raw.decode("utf-8"))
+            payload = json.loads(self._raw.decode("utf-8"), parse_int=to_int, parse_constant=not_json)
             # an escaped lone surrogate parses, but is not text that can be stored or sent back
             json.dumps(payload, ensure_ascii=False).encode("utf-8")
         except (UnicodeError, ValueError):
@@ -508,7 +523,7 @@ class TrackerHandler(BaseHTTPRequestHandler):
             if handler is None:
                 allowed = ", ".join(m for m in METHODS if hasattr(self, f"_{m.lower()}_{kind}"))
                 return self._send(405, {"error": "method not allowed"}, {"Allow": allowed})
-            handler(*(int(group) for group in match.groups()))
+            handler(*(to_int(group) for group in match.groups()))
         except ApiError as exc:
             self._send(exc.status, {"error": str(exc)})
         except Exception as exc:  # a bug, not a client error: say so instead of dropping the connection
@@ -561,7 +576,7 @@ class TrackerHandler(BaseHTTPRequestHandler):
         if project_id is not None:
             if not SIGNED.match(project_id):
                 raise Invalid("project_id must be an integer")
-            project_id = max(min(int(project_id), SQLITE_MAX_INT), -1)
+            project_id = max(min(to_int(project_id), SQLITE_MAX_INT), -1)
 
         status = query.get("status")
         if status is not None and status not in STATUSES:
@@ -572,13 +587,13 @@ class TrackerHandler(BaseHTTPRequestHandler):
             tag = tag.strip().lower()
 
         limit = query.get("limit", str(LIMIT_DEFAULT))
-        if not UNSIGNED.match(limit) or not 1 <= int(limit) <= LIMIT_MAX:
+        if not UNSIGNED.match(limit) or not 1 <= to_int(limit) <= LIMIT_MAX:
             raise Invalid(f"limit must be an integer from 1 to {LIMIT_MAX}")
         offset = query.get("offset", "0")
         if not UNSIGNED.match(offset):
             raise Invalid("offset must be an integer, 0 or more")
 
-        self._send(200, self.store.list_tasks(project_id, status, tag, int(limit), min(int(offset), SQLITE_MAX_INT)))
+        self._send(200, self.store.list_tasks(project_id, status, tag, to_int(limit), min(to_int(offset), SQLITE_MAX_INT)))
 
     def _get_task(self, task_id):
         self._send(200, self.store.get_task(task_id))
