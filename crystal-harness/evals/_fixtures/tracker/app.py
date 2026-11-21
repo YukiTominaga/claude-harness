@@ -274,7 +274,7 @@ class Store:
 
     def create_project(self, name):
         with self._transaction(write=True) as conn:
-            key = name.casefold()
+            key = name.lower()
             if conn.execute("SELECT 1 FROM projects WHERE name_key = ?", (key,)).fetchone():
                 raise Conflict("a project with that name already exists")
             cur = conn.execute(

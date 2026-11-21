@@ -57,6 +57,7 @@ What is said here holds at all times, whichever request last touched the record.
 - 405: a path the API has, with a method it does not support there.
 - 409: the request is well-formed, but what it asks for would break a rule above — a name that is taken, a move the workflow refuses, anything the data model says never happens. Nothing changes.
 - 422: the request is malformed — the body is valid JSON but not an object, a field is missing or of the wrong type or outside its range, a query parameter is not one of its allowed values. Nothing changes.
+- A request that is wrong in more than one of these ways gets one of the statuses that apply; which one is not specified.
 
 ## Non-goals
 - No authentication, no user interface, no renaming of projects, no un-archiving, no due dates, no comments.

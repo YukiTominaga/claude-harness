@@ -94,7 +94,10 @@ class ProjectTests(ApiTest):
         self.project("Alpha")
         self.assertEqual(self.call("POST", "/projects", {"name": "alpha"})[0], 409)
         self.assertEqual(self.call("POST", "/projects", {"name": " ALPHA "})[0], 409)
-        self.assertEqual(len(self.call("GET", "/projects")[1]), 1)
+        # ignoring case, and nothing more: these two differ by spelling
+        self.assertEqual(self.call("POST", "/projects", {"name": "Stra\u00dfe"})[0], 201)
+        self.assertEqual(self.call("POST", "/projects", {"name": "STRASSE"})[0], 201)
+        self.assertEqual(len(self.call("GET", "/projects")[1]), 3)
 
     def test_an_archived_projects_name_is_still_taken(self):
         project = self.project("Alpha")
