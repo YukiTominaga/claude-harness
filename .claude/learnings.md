@@ -284,3 +284,15 @@ designed to need several steps. Claude Code 2.1.330, evaluator effort `high` thr
 - On API defect detection Sonnet 5.5 matched Opus 5.5 (38/39 at three runs against 13/13 at
   one) at a third to two-fifths of the cost. That is not evidence about judging an
   interface or a long build; the pin was left alone.
+
+## 2026-11-22: the eval suite was removed from the repository (0.15.1)
+
+- `crystal-harness/evals/` and `scripts/test_eval_fixtures.py` are gone: 122 of the
+  repository's 169 files, none of them used when the plugin runs, and all of them were
+  being copied into every install because the marketplace source is the plugin directory.
+  The entries above that name `evals/…` paths describe files that no longer exist.
+- The last commit that has them is `7a71dc6` on `main` (crystal-harness 0.15.0), including
+  `evals/BASELINE.md` with every measured number. `git checkout 7a71dc6 -- crystal-harness/evals
+  crystal-harness/scripts/test_eval_fixtures.py` brings the suite back as it was.
+- If it comes back, keep it outside the plugin directory: anything under `crystal-harness/`
+  ships.
