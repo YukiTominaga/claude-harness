@@ -1,6 +1,6 @@
 ---
 description: "Seeded defect: The datastore file is deleted when the server starts, so notes do not survive a restart."
-tags: [seeded]
+tags: [seeded, notes]
 max_turns: 40
 timeout_seconds: 3000
 allowed_tools: [Agent, Read, Bash, Write, Glob, Grep, Skill]

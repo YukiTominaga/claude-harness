@@ -736,14 +736,26 @@ what is sound? `evals/` measures that directly.
 python3 crystal-harness/evals/run.py --runs 3
 ```
 
-Eight cases, each a final assessment of a small Notes API. Six are an app that
-passed, with **one known defect put in** behind a test suite that stays green —
-a write that is rolled back, an error path that answers like the happy path, a
-restart that wipes the data, and so on — so the defect can only be found the way
-the evaluator is told to work, by exercising the product. Two are sound apps. The
-run reports how many seeded defects were **detected** (the verdict fails the round
-*and* names the defect among its blocking issues) and how many sound apps drew a
-**false alarm**. Grading is by regex over `verdict.json`; no model grades a model.
+Seventeen cases, each a final assessment of an API. Thirteen are an app that
+passed, with **one known defect put in** behind a test suite that stays green,
+so the defect can only be found the way the evaluator is told to work, by
+exercising the product. Four are sound apps. The run reports how many seeded
+defects were **detected** (the verdict fails the round *and* names the defect
+among its blocking issues) and how many sound apps drew a **false alarm**.
+Grading is by regex over `verdict.json`; no model grades a model.
+
+The cases come in two sizes. Eight are about a small Notes API, with defects that
+show on the first request to an endpoint — a write that is rolled back, an error
+path that answers like the happy path, a restart that wipes the data. Nine are
+about a larger Tracker API — projects, tasks, a workflow, tasks that wait on other
+tasks, paging — with defects that need a sequence, a second resource or enough
+data to show: a re-opened task that keeps its completion time, a three-task cycle
+that is accepted, a `total` that is only wrong past the first page. One of them
+was not designed: it was in the Tracker as first written, missed by its author
+and its tests, and reported by the evaluator. One of the
+Tracker's two sound apps is rewritten to *read* like a defect while behaving the
+same, to tempt a false alarm. `--evaluator-model` runs the same cases with another
+model as the evaluator.
 
 It runs on `claude plugin eval`. `evals/README.md` has the requirements, the
 caveats and how to add a case; `evals/BASELINE.md` has the numbers the current
@@ -893,7 +905,7 @@ crystal-harness/
 ├── workflows/
 │   ├── evaluate.js                      # parallel evaluation: one evaluator per lens, then reproductions
 │   └── diagnose.js                      # a recurring issue: evidence, three hypotheses, refutations, diagnosis
-├── evals/                               # the evaluator's own eval: 6 seeded-defect cases, 2 clean
+├── evals/                               # the evaluator's own eval: 13 seeded-defect cases, 4 clean, over two apps
 │   ├── run.py                           # runs `claude plugin eval` on a renamed copy, reports recall and false alarms
 │   ├── _fixtures/                       # two sound apps, the mutations, the case generator
 │   └── <case>/{case.yaml,fixture.sh,prompt.md,graders/}
@@ -996,11 +1008,13 @@ recording an unreadable transcript as `null` rather than zero, per-category
 pricing, entries from a pre-0.10.0 `state.json` kept out of token totals, and the budget
 caps with the hook that enforces them.
 
-**68 cases over the eval fixtures**: every fixture built the way an eval run
-builds it — each sound app behaving as the spec says, each seeded app's suite
-passing while a probe shows exactly its one defect — and every grader pattern
-matching a verdict that names the defect and ignoring one that fails for another
-reason. A mutation that silently stopped applying would otherwise be scored as
+**176 cases over the eval fixtures**: every fixture built the way an eval run
+builds it — each sound app behaving as the spec says, the one rewritten to read
+like a defect included; each seeded app's suite passing while a probe shows
+exactly the facts its one defect changes — and every grader pattern matching a
+verdict that names the defect and ignoring one that fails for another reason,
+names a different defect, or mentions the defect only outside the blocking
+issues. A mutation that silently stopped applying would otherwise be scored as
 the evaluator missing a bug.
 
 These ten are tested and the prompts are not, because these ten fail

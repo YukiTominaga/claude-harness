@@ -1,6 +1,6 @@
 ---
 description: "Seeded defect: GET /notes returns notes newest first; the spec says creation order, oldest first."
-tags: [seeded]
+tags: [seeded, notes]
 max_turns: 40
 timeout_seconds: 3000
 allowed_tools: [Agent, Read, Bash, Write, Glob, Grep, Skill]

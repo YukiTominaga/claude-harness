@@ -24,6 +24,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -57,8 +58,8 @@ def run_suite(root):
 class Server:
     """The fixture's real `python3 app.py`, on a free port with a scratch database."""
 
-    def __init__(self, root, db):
-        self.root, self.db = root, db
+    def __init__(self, root, db, prefix="NOTES", health="/notes"):
+        self.root, self.db, self.prefix, self.health = root, db, prefix, health
         self.proc = None
 
     def start(self):
@@ -66,12 +67,12 @@ class Server:
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             self.port = s.getsockname()[1]
-        env = dict(os.environ, NOTES_PORT=str(self.port), NOTES_DB=self.db)
+        env = dict(os.environ, **{f"{self.prefix}_PORT": str(self.port), f"{self.prefix}_DB": self.db})
         self.proc = subprocess.Popen([sys.executable, "app.py"], cwd=self.root, env=env,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
-                self.call("GET", "/notes")
+                self.call("GET", self.health)
                 return self
             except OSError:
                 time.sleep(0.05)
@@ -99,8 +100,8 @@ class Server:
             conn.close()
 
 
-def observe(root):
-    """What the app actually does, as facts a probe can assert on."""
+def observe_notes(root):
+    """What the Notes app actually does, as facts a probe can assert on."""
     db = os.path.join(root, "probe.db")
     server = Server(root, db).start()
     facts = {}
@@ -122,20 +123,175 @@ def observe(root):
     return facts
 
 
-SOUND = {
+def observe_tracker(root):
+    """The same for the Tracker app: one walk through every rule a defect or a
+    decoy touches, in an order that keeps each fact independent of the others."""
+    db = os.path.join(root, "probe.db")
+    server = Server(root, db, prefix="TRACKER", health="/projects").start()
+    facts = {}
+
+    def post(path, body=None):
+        return server.call("POST", path, body)
+
+    def get(path):
+        return server.call("GET", path)[1]
+
+    def task(project, **fields):
+        return post(f"/projects/{project['id']}/tasks", dict({"title": "t"}, **fields))[1]
+
+    def go(task_id, to):
+        return post(f"/tasks/{task_id}/transition", {"to": to})
+
+    def block(task_id, blocker_id):
+        return server.call("PUT", f"/tasks/{task_id}/blockers/{blocker_id}")[0]
+
+    def count(sql, *params):
+        conn = sqlite3.connect(db)
+        try:
+            return conn.execute(sql, params).fetchone()[0]
+        finally:
+            conn.close()
+
+    try:
+        alpha, beta = post("/projects", {"name": "Alpha"})[1], post("/projects", {"name": "Beta"})[1]
+        facts["duplicate_name_status"] = post("/projects", {"name": "ALPHA"})[0]
+        facts["invalid_json_status"] = server.call("POST", "/projects", raw=b"{nope")[0]
+
+        # workflow, and the two ways tags get in
+        first = task(alpha, tags=[" Urgent ", "urgent", "Home"])
+        facts["created_tags"] = first["tags"]
+        facts["todo_to_done_status"] = go(first["id"], "done")[0]
+        go(first["id"], "doing")
+        facts["done_sets_completed_at"] = isinstance(go(first["id"], "done")[1]["completed_at"], str)
+        facts["reopened_completed_at"] = go(first["id"], "doing")[1]["completed_at"]
+        facts["counts"] = get(f"/projects/{alpha['id']}")["task_counts"]
+        facts["patched_tags"] = server.call("PATCH", f"/tasks/{first['id']}", {"tags": [" Later", "LATER", "Home"]})[1]["tags"]
+        facts["tag_filter_finds_patched"] = [t["id"] for t in get("/tasks?tag=later")["items"]] == [first["id"]]
+
+        # listing: three tasks, a page of two
+        made = [task(beta, priority=p)["id"] for p in (3, 5, 3)]
+        page = get(f"/tasks?project_id={beta['id']}&limit=2")
+        facts["page_order"] = [made.index(t["id"]) for t in page["items"]]
+        facts["total_beyond_the_page"] = page["total"]
+        facts["total_on_one_page"] = get(f"/tasks?project_id={beta['id']}")["total"]
+
+        # blocking: x waits on y, y on z
+        x, y, z = (task(alpha)["id"] for _ in range(3))
+        facts["block_status"] = block(x, y)
+        facts["direct_cycle_status"] = block(y, x)
+        block(y, z)
+        facts["indirect_cycle_status"] = block(z, x)
+        go(x, "doing")
+        facts["blocked_done_status"] = go(x, "done")[0]
+        facts["delete_task_status"] = server.call("DELETE", f"/tasks/{y}")[0]
+        facts["blocked_by_after_blocker_deleted"] = get(f"/tasks/{x}")["blocked_by"]
+        facts["done_after_blocker_deleted_status"] = go(x, "done")[0]
+
+        # archiving and moving
+        gamma = post("/projects", {"name": "Gamma"})[1]
+        mover = task(alpha)["id"]
+        facts["archive_status"] = post(f"/projects/{gamma['id']}/archive")[0]
+        facts["create_in_archived_status"] = post(f"/projects/{gamma['id']}/tasks", {"title": "late"})[0]
+        facts["move_into_archived_status"] = post(f"/tasks/{mover}/move", {"project_id": gamma["id"]})[0]
+        facts["task_stayed_where_it_was"] = get(f"/tasks/{mover}")["project_id"] == alpha["id"]
+        facts["move_status"] = post(f"/tasks/{mover}/move", {"project_id": beta["id"]})[0]
+        facts["listed_projects"] = [p["name"] for p in get("/projects")]
+        facts["bad_include_archived_status"] = server.call("GET", "/projects?include_archived=yes")[0]
+        facts["tag_longer_when_lowercased_status"] = post(f"/projects/{alpha['id']}/tasks", {"title": "t", "tags": ["\u0130" * 20]})[0]
+
+        # deleting a project whose task something else waits on
+        waiter = task(alpha)["id"]
+        block(waiter, made[0])
+        facts["delete_project_status"] = server.call("DELETE", f"/projects/{beta['id']}")[0]
+        facts["task_of_deleted_project_status"] = server.call("GET", f"/tasks/{made[0]}")[0]
+        facts["blocked_by_after_project_deleted"] = get(f"/tasks/{waiter}")["blocked_by"]
+        facts["rows_left_behind"] = (
+            count("SELECT COUNT(*) FROM tasks WHERE project_id = ?", beta["id"])
+            + count("SELECT COUNT(*) FROM blockers WHERE blocker_id NOT IN (SELECT id FROM tasks) OR task_id NOT IN (SELECT id FROM tasks)")
+            + count("SELECT COUNT(*) FROM task_tags WHERE task_id NOT IN (SELECT id FROM tasks)")
+        )
+
+        # two things an evaluator found in the app written to be sound
+        post("/projects", {"name": "\u039f\u0394\u039f\u03a3"})
+        facts["case_variant_of_a_name_status"] = post("/projects", {"name": "\u03bf\u03b4\u03bf\u03c3"})[0]
+        facts["number_with_trailing_newline_status"] = [
+            server.call("GET", "/tasks?" + query)[0] for query in ("limit=5%0A", "offset=0%0A", "project_id=1%0A")
+        ]
+
+        before = (get("/projects?include_archived=true"), get("/tasks?limit=100"))
+        server.stop()
+        server.start()
+        facts["survives_restart"] = (get("/projects?include_archived=true"), get("/tasks?limit=100")) == before
+    finally:
+        server.stop()
+    return facts
+
+
+def is_tracker(case):
+    return "-tracker-" in case
+
+
+def observe(case, root):
+    return observe_tracker(root) if is_tracker(case) else observe_notes(root)
+
+
+SOUND_NOTES = {
     "body_returned": "kept", "body_stored": "kept", "list_titles": ["first", "second"],
     "invalid_json_status": 400, "delete_unknown_status": 404, "delete_status": 204,
     "get_after_delete_status": 404, "first_survives_restart": True,
 }
-# The one fact each seeded defect changes, and the value it takes.
-BROKEN = {
-    "seeded-delete-not-committed": ("get_after_delete_status", 200),
-    "seeded-delete-unknown-returns-204": ("delete_unknown_status", 204),
-    "seeded-list-newest-first": ("list_titles", ["second", "first"]),
-    "seeded-restart-wipes-data": ("first_survives_restart", False),
-    "seeded-invalid-json-returns-422": ("invalid_json_status", 422),
-    "seeded-body-discarded": ("body_stored", ""),
+SOUND_TRACKER = {
+    "duplicate_name_status": 409, "invalid_json_status": 400,
+    "created_tags": ["urgent", "home"], "todo_to_done_status": 409, "done_sets_completed_at": True,
+    "reopened_completed_at": None, "counts": {"todo": 0, "doing": 1, "done": 0},
+    "patched_tags": ["later", "home"], "tag_filter_finds_patched": True,
+    "page_order": [1, 0], "total_beyond_the_page": 3, "total_on_one_page": 3,
+    "block_status": 200, "direct_cycle_status": 409, "indirect_cycle_status": 409, "blocked_done_status": 409,
+    "delete_task_status": 204, "blocked_by_after_blocker_deleted": [], "done_after_blocker_deleted_status": 200,
+    "archive_status": 200, "create_in_archived_status": 409, "move_into_archived_status": 409,
+    "task_stayed_where_it_was": True, "move_status": 200, "listed_projects": ["Alpha", "Beta"],
+    "delete_project_status": 204, "task_of_deleted_project_status": 404, "blocked_by_after_project_deleted": [],
+    "rows_left_behind": 0, "survives_restart": True,
+    "bad_include_archived_status": 422, "tag_longer_when_lowercased_status": 422,
+    "case_variant_of_a_name_status": 409, "number_with_trailing_newline_status": [422, 422, 422],
 }
+
+
+def sound(case):
+    return SOUND_TRACKER if is_tracker(case) else SOUND_NOTES
+
+
+SOMETHING = object()  # stands for "a non-empty value" where the value itself is not fixed (a timestamp, an id)
+
+# Every fact each seeded defect changes, and the value it takes. Exactly these
+# must differ from SOUND: a defect that also broke something else would be two.
+BROKEN = {
+    "seeded-delete-not-committed": {"get_after_delete_status": 200},
+    "seeded-delete-unknown-returns-204": {"delete_unknown_status": 204},
+    "seeded-list-newest-first": {"list_titles": ["second", "first"]},
+    "seeded-restart-wipes-data": {"first_survives_restart": False},
+    "seeded-invalid-json-returns-422": {"invalid_json_status": 422},
+    "seeded-body-discarded": {"body_stored": "", "body_returned": ""},
+    "seeded-tracker-reopen-keeps-completed-at": {"reopened_completed_at": SOMETHING},
+    "seeded-tracker-move-into-archived-project": {"move_into_archived_status": 200, "task_stayed_where_it_was": False},
+    "seeded-tracker-deleted-blocker-still-blocks": {"blocked_by_after_blocker_deleted": SOMETHING, "done_after_blocker_deleted_status": 409,
+                                                    "rows_left_behind": 1},
+    "seeded-tracker-indirect-cycle-accepted": {"indirect_cycle_status": 200},
+    "seeded-tracker-total-counts-the-page": {"total_beyond_the_page": 2},
+    "seeded-tracker-patch-tags-not-normalised": {"patched_tags": ["Later", "LATER", "Home"], "tag_filter_finds_patched": False},
+    "seeded-tracker-tag-length-before-lower-casing": {"tag_longer_when_lowercased_status": 201},
+}
+
+
+def differences(case, facts):
+    """(what differs from sound, whether it is exactly what the case's defect predicts)."""
+    expected = BROKEN.get(case, {})
+    differing = {k: v for k, v in facts.items() if sound(case)[k] != v}
+    as_predicted = set(differing) == set(expected) and all(
+        bool(differing[k]) if want is SOMETHING else differing[k] == want
+        for k, want in expected.items()
+    )
+    return differing, as_predicted
 
 
 def grader_pattern(case, name):
@@ -148,30 +304,67 @@ def grader_pattern(case, name):
     return re.compile(pattern, compiled)
 
 
-def verdict_text(blocking_summary, non_blocking_summary=None, overall="fail"):
+def verdict_text(blocking_summary, non_blocking_summary=None, overall="fail", criteria_last=None):
+    """A verdict as an evaluator writes it. `criteria_last` puts a criteria array
+    mentioning that text AFTER blockingIssues — a key order the schema does not
+    forbid — to check a grader does not read a criterion as a blocking issue."""
     def issue(issue_id, summary):
         return {"id": issue_id, "summary": summary, "repro": ["x"], "observed": "o", "expected": "e",
                 "cause": {"file": "app.py", "line": 1, "mechanism": "m"}}
-    return json.dumps({
-        "overall": overall,
-        "criteria": [{"id": "SPEC-1", "text": "notes are listed in creation order and DELETE of an unknown id returns 404; "
-                      "invalid JSON returns 400; the body is returned; notes persist across a restart and stay committed",
-                      "result": "fail"}],
-        "blockingIssues": [issue("B-1", blocking_summary)] if blocking_summary else [],
-        "nonBlockingIssues": [issue("N-1", non_blocking_summary)] if non_blocking_summary else [],
-    }, indent=2)
+    criteria = [{"id": "SPEC-1", "text": "notes are listed in creation order and DELETE of an unknown id returns 404; "
+                 "invalid JSON returns 400; the body is returned; notes persist across a restart and stay committed",
+                 "result": "fail"}]
+    verdict = {"overall": overall}
+    if criteria_last is None:
+        verdict["criteria"] = criteria
+    verdict["blockingIssues"] = [issue("B-1", blocking_summary)] if blocking_summary else []
+    if criteria_last is not None:
+        verdict["criteria"] = criteria + [{"id": "SPEC-2", "text": criteria_last, "result": "pass"}]
+    verdict["nonBlockingIssues"] = [issue("N-1", non_blocking_summary)] if non_blocking_summary else []
+    return json.dumps(verdict, indent=2)
 
 
-# What an evaluator that found each defect would plausibly write.
+# What an evaluator that found each defect would plausibly write — two phrasings
+# for the tracker defects, since their patterns have more to get wrong.
 NAMED = {
-    "seeded-delete-not-committed": "DELETE /notes/1 returns 204 but the note is still there afterwards: the connection is closed without a commit",
-    "seeded-delete-unknown-returns-204": "DELETE of an unknown id returns 204; the spec requires 404",
-    "seeded-list-newest-first": "GET /notes returns notes newest first instead of creation order",
-    "seeded-restart-wipes-data": "All notes are gone after a restart: NoteStore deletes the database file on startup",
-    "seeded-invalid-json-returns-422": "POST /notes with invalid JSON returns 422, the spec says 400",
-    "seeded-body-discarded": "POST /notes accepts a body but stores an empty string",
+    "seeded-delete-not-committed": ["DELETE /notes/1 returns 204 but the note is still there afterwards: the connection is closed without a commit"],
+    "seeded-delete-unknown-returns-204": ["DELETE of an unknown id returns 204; the spec requires 404"],
+    "seeded-list-newest-first": ["GET /notes returns notes newest first instead of creation order"],
+    "seeded-restart-wipes-data": ["All notes are gone after a restart: NoteStore deletes the database file on startup"],
+    "seeded-invalid-json-returns-422": ["POST /notes with invalid JSON returns 422, the spec says 400"],
+    "seeded-body-discarded": ["POST /notes accepts a body but stores an empty string"],
+    "seeded-tracker-reopen-keeps-completed-at": [
+        "Re-opening a done task (done -> doing) leaves completed_at set; the spec says it goes back to null",
+        "A task that left done still carries its completion timestamp",
+    ],
+    "seeded-tracker-move-into-archived-project": [
+        "POST /tasks/{id}/move into an archived project returns 200 and moves the task; the spec requires 409",
+        "An archived project still accepts tasks through move",
+    ],
+    "seeded-tracker-deleted-blocker-still-blocks": [
+        "After DELETE /tasks/{blocker}, the waiting task still lists it in blocked_by and can never enter done",
+        "blocked_by keeps the id of a removed task: delete_task only clears relations where the task is the waiter",
+    ],
+    "seeded-tracker-indirect-cycle-accepted": [
+        "PUT /tasks/C/blockers/A is accepted although A waits on B and B on C: a three-task cycle",
+        "Only direct mutual blocking is refused; an indirect loop through a third task goes through with 200",
+    ],
+    "seeded-tracker-total-counts-the-page": [
+        "GET /tasks?limit=2 reports total 2 when 3 tasks match: total is the length of the page",
+        "The total in a task listing changes with limit and offset",
+    ],
+    "seeded-tracker-patch-tags-not-normalised": [
+        "PATCH /tasks/{id} stores tags without lower-casing them, so ?tag= no longer finds the task",
+        "Duplicate and upper-case tags survive a PATCH; only creation normalises the tags array",
+    ],
+    "seeded-tracker-tag-length-before-lower-casing": [
+        "Tag length is checked before lower-casing, so a tag whose lower-case form is longer than 20 characters is stored",
+        "20 x U+0130 is accepted with 201 and held as a 40-character tag: the limit is applied before the tag is lower-cased",
+    ],
 }
 UNRELATED = "The test suite covers only the happy path of creating a note, so nothing guards the remaining behaviour"
+UNRELATED_TRACKER = ("The test suite covers only the happy path of filing a task and starting it; "
+                     "nothing guards the workflow rules, listing or archiving")
 
 
 def main():
@@ -180,6 +373,8 @@ def main():
     clean = [c for c in cases if c.startswith("clean-")]
     check("the suite has seeded and clean cases and nothing else", len(seeded) >= 5 and len(clean) >= 2 and len(seeded) + len(clean) == len(cases), cases)
     check("every seeded case has a probe and a sample verdict here", set(seeded) == set(BROKEN) == set(NAMED), set(seeded) ^ set(BROKEN))
+    check("both fixtures have seeded and clean cases",
+          all(any(is_tracker(c) == tracker for c in group) for group in (seeded, clean) for tracker in (True, False)), cases)
 
     for case in cases:
         root, proc = build(case)
@@ -192,28 +387,39 @@ def main():
             check(f"{case}: one commit, clean tree", len(log.strip().splitlines()) == 1 and not dirty.strip(), log + dirty)
             suite = run_suite(root)
             check(f"{case}: its test suite passes", suite.returncode == 0, suite.stderr[-300:])
-            facts = observe(root)
+            facts = observe(case, root)
+            check(f"{case}: the probe covers every fact it is compared on", set(facts) == set(sound(case)), set(facts) ^ set(sound(case)))
+            differing, as_predicted = differences(case, facts)
             if case in BROKEN:
-                fact, value = BROKEN[case]
-                check(f"{case}: the seeded defect is really there ({fact})", facts[fact] == value, facts)
-                others = {k: v for k, v in facts.items() if k != fact and SOUND[k] != v}
-                # A wiped datastore or a rolled-back delete legitimately shows up in a second fact.
-                allowed = {"seeded-delete-not-committed": set(), "seeded-restart-wipes-data": set(),
-                           "seeded-body-discarded": {"body_returned"}}.get(case, set())
-                check(f"{case}: and nothing else is broken", set(others) <= allowed, others)
+                check(f"{case}: the seeded defect is really there, and nothing else is broken ({', '.join(BROKEN[case])})",
+                      as_predicted, differing)
             else:
-                check(f"{case}: the app behaves as the spec says", facts == SOUND, {k: v for k, v in facts.items() if SOUND[k] != v})
+                check(f"{case}: the app behaves as the spec says", not differing, differing)
+            if "decoy" in case:
+                base = open(os.path.join(EVALS, "_fixtures", "tracker", "app.py"), encoding="utf-8").read()
+                check(f"{case}: the decoys really rewrote the app", open(os.path.join(root, "app.py"), encoding="utf-8").read() != base)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
     for case in seeded:
         names = grader_pattern(case, "names-the-defect")
         fails = grader_pattern(case, "fails-the-round")
-        check(f"{case}: grader matches a verdict that names the defect", bool(names.search(verdict_text(NAMED[case]))))
-        check(f"{case}: grader ignores a fail for an unrelated reason", not names.search(verdict_text(UNRELATED)), UNRELATED)
+        unrelated = UNRELATED_TRACKER if is_tracker(case) else UNRELATED
+        for index, text in enumerate(NAMED[case], 1):
+            check(f"{case}: grader matches a verdict that names the defect (phrasing {index})", bool(names.search(verdict_text(text))), text)
+        check(f"{case}: grader ignores a fail for an unrelated reason", not names.search(verdict_text(unrelated)), unrelated)
         check(f"{case}: grader ignores the defect when it is only a non-blocking note",
-              not names.search(verdict_text(UNRELATED, non_blocking_summary=NAMED[case])))
+              not names.search(verdict_text(unrelated, non_blocking_summary=NAMED[case][0])))
+        check(f"{case}: grader ignores the defect when only a criterion written after the blocking issues mentions it",
+              not names.search(verdict_text(unrelated, criteria_last=NAMED[case][0])))
         check(f"{case}: fails-the-round reads the overall verdict", bool(fails.search(verdict_text("x"))) and not fails.search(verdict_text(None, overall="pass")))
+    # A tracker verdict that names one defect must not be scored as naming another.
+    tracker_seeded = [c for c in seeded if is_tracker(c)]
+    for case in tracker_seeded:
+        names = grader_pattern(case, "names-the-defect")
+        mistaken = [other for other in tracker_seeded if other != case
+                    and any(names.search(verdict_text(text)) for text in NAMED[other])]
+        check(f"{case}: grader does not take another tracker defect for its own", not mistaken, mistaken)
     for case in clean:
         passes = grader_pattern(case, "passes-the-round")
         none = grader_pattern(case, "no-blocking-issues")

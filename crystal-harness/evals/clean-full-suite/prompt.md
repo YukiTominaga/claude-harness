@@ -1,6 +1,6 @@
 ---
 description: "No seeded defect: The Notes API as it passed a final assessment, with its own test suite."
-tags: [clean]
+tags: [clean, notes]
 max_turns: 40
 timeout_seconds: 3000
 allowed_tools: [Agent, Read, Bash, Write, Glob, Grep, Skill]
