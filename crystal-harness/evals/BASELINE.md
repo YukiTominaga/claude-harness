@@ -13,6 +13,31 @@ observations, not rates.
 defect in both apps. What the Tracker runs did show is in "What the Tracker runs
 showed" below, and it is not what they were built to show.
 
+## Sonnet 5.5 as the evaluator — 2026-11-22
+
+The question: on what this suite measures, does the evaluator do as well on
+`claude-sonnet-5-5` as on the pinned `claude-opus-5-5`, both at effort `high`?
+All seventeen cases, three runs each on Sonnet, one run each on Opus as the
+reference on the same fixture.
+
+### Decided before the run
+
+- **Detection holds** if every seeded case is detected in at least two of its
+  three Sonnet runs, and no more than two of the 39 seeded runs are misses.
+  A case missed in two or three of three is a kind of defect Sonnet does not
+  reliably find, whatever the total.
+- **False alarms hold** if at most one of the twelve clean Sonnet runs fails a
+  sound app. Every failing clean run is read first: one that cites a real defect
+  in the fixture is not a false alarm — it is reported as such, and the fixture
+  is fixed afterwards, not during the pass.
+- A run that ends without a verdict is invalid and in neither count; it is
+  reported, not silently re-run.
+- The Opus pass is one run per case. It is there to show the cases behave on the
+  current fixture, not to estimate Opus's own miss rate.
+- Whatever comes out speaks for defect detection through an API on two small
+  apps. It says nothing about an interface, a long build, or the judgement
+  dimensions, and it does not change the pin.
+
 ## Tracker cases — 2026-11-21
 
 | | |
