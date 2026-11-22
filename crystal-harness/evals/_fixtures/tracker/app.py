@@ -289,7 +289,8 @@ class Store:
 
     def create_project(self, name):
         with self._transaction(write=True) as conn:
-            key = name.lower()
+            # case folding, not lower(): lower() gives a capital sigma two forms by position
+            key = name.casefold()
             if conn.execute("SELECT 1 FROM projects WHERE name_key = ?", (key,)).fetchone():
                 raise Conflict("a project with that name already exists")
             cur = conn.execute(
@@ -439,19 +440,19 @@ class Store:
 # --------------------------------------------------------------------------
 
 ROUTES = (
-    (re.compile(r"^/projects$", re.ASCII), "projects"),
-    (re.compile(r"^/projects/(\d+)$", re.ASCII), "project"),
-    (re.compile(r"^/projects/(\d+)/archive$", re.ASCII), "archive"),
-    (re.compile(r"^/projects/(\d+)/tasks$", re.ASCII), "project_tasks"),
-    (re.compile(r"^/tasks$", re.ASCII), "tasks"),
-    (re.compile(r"^/tasks/(\d+)$", re.ASCII), "task"),
-    (re.compile(r"^/tasks/(\d+)/transition$", re.ASCII), "transition"),
-    (re.compile(r"^/tasks/(\d+)/move$", re.ASCII), "move"),
-    (re.compile(r"^/tasks/(\d+)/blockers/(\d+)$", re.ASCII), "blocker"),
+    (re.compile(r"^/projects\Z", re.ASCII), "projects"),
+    (re.compile(r"^/projects/(\d+)\Z", re.ASCII), "project"),
+    (re.compile(r"^/projects/(\d+)/archive\Z", re.ASCII), "archive"),
+    (re.compile(r"^/projects/(\d+)/tasks\Z", re.ASCII), "project_tasks"),
+    (re.compile(r"^/tasks\Z", re.ASCII), "tasks"),
+    (re.compile(r"^/tasks/(\d+)\Z", re.ASCII), "task"),
+    (re.compile(r"^/tasks/(\d+)/transition\Z", re.ASCII), "transition"),
+    (re.compile(r"^/tasks/(\d+)/move\Z", re.ASCII), "move"),
+    (re.compile(r"^/tasks/(\d+)/blockers/(\d+)\Z", re.ASCII), "blocker"),
 )
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
-UNSIGNED = re.compile(r"^\d+$", re.ASCII)
-SIGNED = re.compile(r"^-?\d+$", re.ASCII)
+UNSIGNED = re.compile(r"^\d+\Z", re.ASCII)
+SIGNED = re.compile(r"^-?\d+\Z", re.ASCII)
 
 
 class TrackerHandler(BaseHTTPRequestHandler):

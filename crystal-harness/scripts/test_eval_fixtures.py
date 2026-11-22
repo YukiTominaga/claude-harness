@@ -211,6 +211,13 @@ def observe_tracker(root):
             + count("SELECT COUNT(*) FROM task_tags WHERE task_id NOT IN (SELECT id FROM tasks)")
         )
 
+        # two things an evaluator found in the app written to be sound
+        post("/projects", {"name": "\u039f\u0394\u039f\u03a3"})
+        facts["case_variant_of_a_name_status"] = post("/projects", {"name": "\u03bf\u03b4\u03bf\u03c3"})[0]
+        facts["number_with_trailing_newline_status"] = [
+            server.call("GET", "/tasks?" + query)[0] for query in ("limit=5%0A", "offset=0%0A", "project_id=1%0A")
+        ]
+
         before = (get("/projects?include_archived=true"), get("/tasks?limit=100"))
         server.stop()
         server.start()
@@ -246,6 +253,7 @@ SOUND_TRACKER = {
     "delete_project_status": 204, "task_of_deleted_project_status": 404, "blocked_by_after_project_deleted": [],
     "rows_left_behind": 0, "survives_restart": True,
     "bad_include_archived_status": 422, "tag_longer_when_lowercased_status": 422,
+    "case_variant_of_a_name_status": 409, "number_with_trailing_newline_status": [422, 422, 422],
 }
 
 

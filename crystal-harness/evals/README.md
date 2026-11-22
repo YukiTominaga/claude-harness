@@ -171,3 +171,9 @@ an API — on two small apps.
 - Run as root (as in some containers), the sandbox makes every Bash call end with
   a "Read-only file system" line and a non-zero exit code. The case prompt tells
   the evaluator so; expect that note to be irrelevant on an ordinary machine.
+- There, the evaluator's Bash commands also see the project directory read-only,
+  and each has its own `/tmp` and network. `python3 app.py` cannot be started in
+  place and probed from the next command; the evaluator has to copy the app
+  somewhere writable, override the database path, or run server and probes in one
+  command. Nearly every run does (67 of 68 in the last pass). The one that gave
+  up scored as a miss — read a miss before counting it.

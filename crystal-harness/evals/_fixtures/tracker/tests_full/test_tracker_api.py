@@ -94,10 +94,17 @@ class ProjectTests(ApiTest):
         self.project("Alpha")
         self.assertEqual(self.call("POST", "/projects", {"name": "alpha"})[0], 409)
         self.assertEqual(self.call("POST", "/projects", {"name": " ALPHA "})[0], 409)
-        # ignoring case, and nothing more: these two differ by spelling
+        self.assertEqual(len(self.call("GET", "/projects")[1]), 1)
+
+    def test_names_are_compared_case_folded(self):
+        # the spec's own example: one name
         self.assertEqual(self.call("POST", "/projects", {"name": "Stra\u00dfe"})[0], 201)
-        self.assertEqual(self.call("POST", "/projects", {"name": "STRASSE"})[0], 201)
-        self.assertEqual(len(self.call("GET", "/projects")[1]), 3)
+        self.assertEqual(self.call("POST", "/projects", {"name": "STRASSE"})[0], 409)
+        # a capital sigma lower-cases to a different letter at the end of a word
+        self.assertEqual(self.call("POST", "/projects", {"name": "\u039f\u0394\u039f\u03a3"})[0], 201)
+        self.assertEqual(self.call("POST", "/projects", {"name": "\u03bf\u03b4\u03bf\u03c3"})[0], 409)
+        self.assertEqual(self.call("POST", "/projects", {"name": "\u03bf\u03b4\u03bf\u03c2"})[0], 409)
+        self.assertEqual(len(self.call("GET", "/projects")[1]), 2)
 
     def test_an_archived_projects_name_is_still_taken(self):
         project = self.project("Alpha")
@@ -338,7 +345,8 @@ class ListTests(ApiTest):
 
     def test_bad_query_values_are_422(self):
         for query in ("?limit=0", "?limit=101", "?limit=x", "?limit=-1", "?limit=", "?offset=-1", "?offset=x",
-                      "?status=open", "?status=", "?project_id=abc", "?project_id=1.5"):
+                      "?status=open", "?status=", "?project_id=abc", "?project_id=1.5",
+                      "?limit=5%0A", "?offset=0%0A", "?project_id=1%0A"):
             self.assertEqual(self.call("GET", "/tasks" + query)[0], 422, query)
 
 

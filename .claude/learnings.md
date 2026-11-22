@@ -261,3 +261,26 @@ designed to need several steps. Claude Code 2.1.330, evaluator effort `high` thr
   recorded the forced model. `evals/run.py --evaluator-model` uses that.
 - `--keep-temp` as root cannot seal the kept directory; it says so. Read `.harness/` files
   from it, run nothing inside it, and remove it with `chmod -R u+rwX` first.
+
+## 2026-11-22: a cheaper evaluator, three runs per case
+
+- **Write the pass criteria into the repo before the run, including how a failing clean
+  run will be read.** Two of twelve clean runs failed, one over the limit set; both cited
+  defects that reproduce. Without the rule committed beforehand, calling them "not false
+  alarms" afterwards would have been indistinguishable from moving the goalposts. Report
+  the raw count next to the reading anyway.
+- **Run the pinned configuration on the same fixture state, even once.** The reference run
+  failed a clean case on the same defect as the cheaper model. That one run is what showed
+  the clean failures were about the fixture.
+- **A fix for one finding seeded the next.** `casefold()` was swapped for `lower()` to keep
+  `ß` and `ss` apart; `lower()` gives a capital sigma two forms by position. When a
+  comparison rule is arguable, write the rule into the spec and stop adjusting the code.
+- **`$` in a validating regex admits a trailing newline** (`limit=5%0A`). Use `\Z` or
+  `fullmatch`.
+- **Read the saved `qa.md` files across a pass, not only the failures.** That is where it
+  showed that the sandbox mounts the project directory read-only for the evaluator's Bash —
+  a condition every run had been working around and the case prompt never mentioned. The
+  one miss in 39 was a run that did not work around it.
+- On API defect detection Sonnet 5.5 matched Opus 5.5 (38/39 at three runs against 13/13 at
+  one) at a third to two-fifths of the cost. That is not evidence about judging an
+  interface or a long build; the pin was left alone.
