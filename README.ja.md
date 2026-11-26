@@ -73,7 +73,7 @@ flowchart TB
 | --- | --- | --- | --- | --- |
 | **オーケストレーター** | メインセッション(モデル固定なし) | `Agent`, `Read`, `Write`, `Bash` など | `state.json`, `handoff.md`, `journal.md`, 成果物の git commit | アプリのコードを書く、採点する、`codex-review.md` を読む・中継する |
 | **harness-planner** | `claude-opus-5-5`, `high` | Read, Grep, Glob, Write, WebSearch, WebFetch | `spec.md` のみ | 雛形生成、インストール、コードを書く |
-| **harness-generator** | `claude-opus-5-5`, `xhigh` | 上記 + Edit, Bash, Skill, TodoWrite | `contract.md`(草案・修正)、アプリのコードと commit、`report.md` | `qa.md`・`verdict.json`・`screenshots/`・`codex-review.md` を書く、実装後に受け入れ基準を書き換える |
+| **harness-generator** | `claude-opus-5-5`, `xhigh` | 上記 + Edit, Bash, Skill, TodoWrite | `contract.md`(草案・修正)、アプリのコードと commit、`build-notes.md` | `qa.md`・`verdict.json`・`screenshots/`・`codex-review.md` を書く、実装後に受け入れ基準を書き換える |
 | **harness-evaluator** | `claude-opus-5-5`, `high` | Read, Grep, Glob, Write, Bash, Skill, Playwright MCP — **Edit はなし** | contract のレビュー欄、`qa.md`, `verdict.json`, `screenshots/` | `.harness/` の外に書く、`codex-review.md` を書く |
 | **codex レビュー** | Codex CLI 側で設定されたモデル(このプラグインでは指定しない) | — | `codex-review.md`(`codex_review.py` 経由) | ラウンドの合否を決める。あくまで判断材料であって判定ではない |
 
@@ -93,12 +93,12 @@ flowchart LR
     hgate --> gen
 
     gen["harness-generator<br/><i>判断: どう作るか</i>"] --> code[/"アプリのコード + commit"/]
-    gen --> report[/"report.md"/]
+    gen --> notes[/"build-notes.md"/]
 
     code --> codex["codex レビュー<br/><i>指摘を挙げる</i>"]
     codex --> cr[/"codex-review.md"/]
 
-    spec & code & report & cr --> evalr["harness-evaluator<br/><i>判断: pass / fail</i>"]
+    spec & code & notes & cr --> evalr["harness-evaluator<br/><i>判断: pass / fail</i>"]
     evalr --> qa[/"qa.md"/]
     evalr --> vj[/"verdict.json"/]
 
@@ -150,7 +150,7 @@ flowchart LR
 | プロダクトの範囲 | harness-planner が書き、**人間が承認** | アイデアとドメイン知識 | `spec.md`: 画面、feature ordering、やらないこと、未解決の問い |
 | contract の形式が正しいか | `validate_contract.py` | 基準数の上限、スコープの項目数、ID の重複 | OK / 1回修正 / エスカレーション |
 | contract はテスト可能で、作る価値があるか | harness-evaluator | `sprint-contract` の5つのレビュー観点 | `accepted` · `accepted-with-amendments` · `changes-requested` |
-| どう実装するか | harness-generator | contract または spec、前回の blocking issue | コード、commit、`report.md`(完了 / 部分的 / 未着手) |
+| どう実装するか | harness-generator | contract または spec、前回の blocking issue | コード、commit、`build-notes.md`(完了 / 部分的 / 未着手) |
 | codex の指摘は本物か | harness-evaluator | コードを読んで確認 | `qa.md` に採用・却下を記録。確認できない指摘は blocking にならない |
 | そのラウンドは合格か | harness-evaluator | アプリを実際に動かす(テスト、API、データストア、有効ならブラウザ)。ルーブリックの6観点を閾値と比較 | `verdict.json`: `pass` / `fail`、スコア、再現手順と原因付きの blocking issue、`verificationMode` |
 | その `pass` は許されるか | `validate_verdict.py` | スキーマ、閾値、モードごとのルール(`degraded` は絶対に pass にならない、headless は何かを実行している必要がある) | 妥当 / 1回差し戻し |

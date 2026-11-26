@@ -76,6 +76,18 @@ uses Bash (heredoc/`cat >`) instead of Write, or returns the text and lets the c
 write it. Design implication: any agent instructed to "write X.md" should have a Bash
 fallback in mind, since Write is not guaranteed to succeed for report-shaped files.
 
+**Superseded 2026-11-26 (crystal-harness 0.16.0).** The cause is now known: Claude
+Code's Write tool rejects a subagent's write whose basename matches
+`/^(REPORT|SUMMARY|FINDINGS|ANALYSIS).*\.md$/i` (errorCode 5, telemetry
+`tengu_subagent_md_report_blocked`, confirmed on 2.1.332), during input validation,
+before permission rules and PreToolUse hooks — no setting turns it off. The Bash
+fallback above was wrong advice: in a later run auto mode's classifier denied it as
+"Undermining Oversight" and the loop stopped. Fix: the generator's notes are
+`build-notes.md` (a builder's report `reports/builder-<name>.md`), agents never route
+around a refused Write, and an unexpected refusal is handled by handing the file
+back between markers for `scripts/returned_files.py place` to put in place.
+`scripts/test_subagent_filenames.py` keeps refused names out of the prompts.
+
 ## 2026-08-09: `python3 - <<'PY'` in a hook eats the event
 A hook receives its event JSON on stdin. Feeding the Python program itself in via a
 heredoc consumes that stdin, so the script sees an empty/garbage payload and every

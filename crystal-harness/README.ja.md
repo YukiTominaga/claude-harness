@@ -97,6 +97,12 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 コマンドがすべて `Unknown command` になることです。`enabled` が false なら
 `claude plugin enable crystal-harness` を実行してから再起動してください。
 
+**0.16.0 で、generator の報告ファイルの名前を `report.md` から `build-notes.md` に変えました。**
+builder の報告も `reports/<name>.md` から `reports/builder-<name>.md` に変わっています。古い
+バージョンで始めた run も、アップデート後にそのまま続けられます。ラウンドの報告を読む側は
+`build-notes.md` を読み、それが無いときだけ旧名の `report.md` を読みます。両方あるときは旧名を
+無視します。詳しくは「[`build-notes.md`(旧 `report.md`)](#build-notesmd旧-reportmd)」を参照してください。
+
 ## クイックスタート
 
 ```
@@ -137,9 +143,10 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 ├── handoff.md           # コンテキストリセット用の引き継ぎファイル(毎回書き直す)
 ├── journal.md           # 追記のみの、人間向けログ
 ├── artifacts/           # Playwright の作業出力。browser モードのみ(gitignore 対象)
+├── captures/            # 書けなかったファイルを差し戻したエージェントの最終応答
 ├── sprints/01/
 │   ├── contract.md      # generator が提案し、evaluator が受諾する
-│   ├── report.md        # generator の完了報告 + セルフチェック
+│   ├── build-notes.md   # generator の完了報告(完了 / 部分的 / 未着手) + セルフチェック
 │   ├── codex-review.md  # diff の独立レビュー(codex が入っている場合)
 │   ├── test-changes.json # そのラウンドがテストに何をしたか(スクリプトが出力)
 │   ├── rules-to-check.json # このラウンドの diff が当たったプロジェクトルール
@@ -151,7 +158,7 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 └── final/01/            # run の最後の評価。ラウンドごとに1ディレクトリ
     ├── qa.md
     ├── verdict.json
-    ├── report.md
+    ├── build-notes.md
     ├── codex-review.md
     ├── test-changes.json
     ├── lenses/
@@ -160,6 +167,42 @@ claude plugin list --json | grep -A1 crystal-harness   # "enabled": true を確�
 
 完全な定義、2つの JSON Schema、`handoff.md` のテンプレートは
 `crystal-harness:harness-protocol` skill にあります。
+
+### `build-notes.md`(旧 `report.md`)
+
+0.15.1 までは、generator に `report.md` を書かせていました。ところが Claude Code の `Write`
+ツールは、サブエージェントが書こうとするファイルの basename が
+`/^(REPORT|SUMMARY|FINDINGS|ANALYSIS).*\.md$/i` に合うと、「Subagents should return findings as
+text, not write report files」というメッセージで拒否します。このチェックはツール入力の検証の段階で
+働き、権限ルールや `PreToolUse` hook より先に効くので、allow ルールでも hook でも権限モードでも
+外せません(Claude Code 2.1.332 で確認)。そのため generator は自分の報告を一度も書けませんでした。
+プロンプトにあった回り道(同じ内容を Bash の heredoc で書く)は、auto mode の分類器に
+「Undermining Oversight」として止められ、ループが止まりました。
+
+- **名前。** `build-notes.md` は、先頭だけでなくどこにも4語のどれも含みません。規則が「先頭が」から
+  「含む」に広がっても当たりません。中身(ビルドした側の申告であって判定ではない)を表し、
+  `handoff.md`・`journal.md`・`qa.md` とも紛れません。builder の報告は `reports/builder-<name>.md`
+  なので、builder の名前が `report-ui` や `summary` でも自分の報告を書けます。
+- **古い run。** プラグインのアップデートは run の途中で入りうるので、ラウンドのディレクトリに旧名の
+  `report.md` が残っていることがあります。evaluator、`commands/build.md`
+  (`scripts/returned_files.py notes-path` 経由)、`team_build.py` は `build-notes.md` を読み、
+  それが無いときだけ旧名を読みます。両方あるときは旧名を無視します。builder の旧名
+  `reports/<name>.md` も同じ扱いです。guard は新旧どちらの名前も同じように守ります。evaluator は
+  読むだけで、書けるのは generator だけです。
+- **それでも `Write` が拒否されたとき。** 拒否を回り込めという指示は、どのプロンプトにももうありません
+  (Bash でも、別の名前でも)。プラグインの外の規則で `Write` を拒否されたエージェントは、最終応答の
+  末尾に `Write rejected:` の行と、`<!-- crystal-harness:begin <name> -->` と
+  `<!-- crystal-harness:end <name> -->` で囲んだファイルの本文を置いて止まります。`SubagentStop`
+  hook がその最終応答をそのまま `.harness/captures/` に保存し、オーケストレーターは
+  `returned_files.py place` を実行します。`place` は、そのエージェントの役割が持つファイルに限って、
+  各ブロックを1バイトも変えずに書き、出所を journal に残します。それ以外の場合は何も書かず、run は
+  止まって人間に判断を仰ぎます。オーケストレーターが本文を書き写すことはありません。報告は generator
+  の証言であり、オーケストレーターが写したものはオーケストレーター自身の言葉になってしまうからです。
+  この機械的な経路には人の了承を挟みません。何も判断していないからです。人間には journal と
+  ラウンドの報告で知らせます。
+- `scripts/test_subagent_filenames.py` が、`agents/`・`skills/`・`commands/`・`workflows/` に出てくる
+  `.md` の名前(プレースホルダ入りのものも含む)をすべて集め、Claude Code が拒否する名前があれば
+  落ちます。同じ間違いが気づかれないまま出荷されることはもうありません。
 
 `handoff.md` は構造の要になるファイルです。事前のコンテキストをまったく持たない新しいエージェントが、
 これだけで作業を続けられなければいけません。書く内容は次のとおりです。
@@ -227,6 +270,11 @@ hook は少しだけ待つ必要もあります。Claude Code がエージェン
   ファイルが verdict そのものだから。
 - **どちらか一方でも** `rules.json`、`issues.jsonl`、ラウンドの `rules-to-check.json` を書くこと。
   ルールを編集できる generator は、自分を捕まえるはずのルールを消せてしまう。
+- generator 以外が generator の報告(`build-notes.md`、または古い run の旧名 `report.md`。どちらも
+  同じ扱い)を書くこと、および builder が自分の `reports/builder-<name>.md` 以外の報告を書くこと。
+  報告は generator の証言で、evaluator は読むだけで書き換えない。
+- **どのエージェントであれ** `.harness/captures/` を書くこと。オーケストレーターが差し戻された
+  ファイルを置くときの元になる最終応答なので、偽造できれば別のエージェントの言葉をでっち上げられる。
 - `harness-investigator` がラウンドの `diagnosis/` 以外に書くこと。調査役の仕事は診断であり、
   自分で書き換えたツリーに対する診断は、別のツリーの診断になってしまう。
 
@@ -238,7 +286,9 @@ hook は少しだけ待つ必要もあります。Claude Code がエージェン
 特定の失敗を防がないからです。何も防がない足場こそ、この設計全体が避けようとしているオーバーヘッドです。
 残り2つの hook は、それぞれ1つの失敗に対応しています。`SessionStart` は、ここに run がすでにある
 ことを知らせます。`SubagentStop` は上のコスト台帳を記録します。モデルが覚えていて書くはずの
-エントリは、いずれ書かれなくなるからです。
+エントリは、いずれ書かれなくなるからです。`SubagentStop` はもう1つ、ファイルを差し戻したエージェントの
+最終応答を保存します。差し戻されたファイルを、オーケストレーターが写したものからではなく、
+エージェントが書いたものから置くためです。
 
 境界での振る舞いとその理由:
 
@@ -383,7 +433,7 @@ generator を `xhigh` から `medium` に下げるほうが、どれかのエー
    contract を差し戻すのは4種類の指摘だけで、修正はその指摘が名指しした箇所だけを直す。最大2ラウンド
    で、それでも合意できなければエスカレーションする。
 3. **実装。** 新しい generator が実装する。チェックポイントごとに commit し、プロジェクト自身の
-   build / typecheck / test を実行して自分の失敗を直し、`report.md` に「完了したこと」「部分的なこと」
+   build / typecheck / test を実行して自分の失敗を直し、`build-notes.md` に「完了したこと」「部分的なこと」
    「手を付けなかったこと」を書く。
 4. **独立レビュー。** `codex` プラグインが使えれば、evaluator を起動する前に、Claude 以外のモデルが
    スプリントの diff をレビューし、結果を `codex-review.md` に書く。codex がない、または未認証なら、
@@ -614,7 +664,8 @@ teammate です。1つの作業ツリーに generator が2体いると衝突し�
    編集している最中だから。
 5. builder が止まったら、`team_build.py check` が、分担表で許されていないもの(未コミットの作業、
    誰の担当でもないのに変更されたパス、欠けているレポート)を、直せる builder 宛てに列挙する。
-   続いて `team_build.py report` が、builder 自身のレポートを、evaluator が読む `report.md` にまとめる。
+   続いて `team_build.py report` が、builder 自身のレポート(`reports/builder-<name>.md`)を、
+   evaluator が読む `build-notes.md` にまとめる。
 
 QA で fail した後の修正は分担しません。対象は少数の blocking issue なので、今までどおり generator
 1体に任せます。builder はラウンドをまたいで使い回さないので、ハーネスのコンテキストリセットの原則は
@@ -878,6 +929,7 @@ crystal-harness/
 │   ├── test_changes.py                  # ラウンドがテストに何をしたか: 削除、skip、コマンドの差し替え
 │   ├── merge_verdicts.py                # 観点ごとの verdict → 1つの verdict.json + qa.md。無理なら何も出さない
 │   ├── team_build.py                    # 分担表: 検査、有効化、builder ごとのコミット、後始末の検査、名前のゲート
+│   ├── returned_files.py                # 差し戻されたファイル: SubagentStop での保存、place、notes-path
 │   ├── rules.py                         # issue の記録、ルールの候補、承認済みルール、diff が当たるルールの判定
 │   ├── validate_verdict.py              # verdict.json のスキーマ + モードごとに pass が意味してよいこと
 │   ├── validate_contract.py             # contract.md の基準数の上限、スコープの大きさ、ID の整合性
@@ -890,7 +942,9 @@ crystal-harness/
 │   ├── test_test_changes.py
 │   ├── test_merge_verdicts.py
 │   ├── test_team_build.py
-│   └── test_rules.py
+│   ├── test_rules.py
+│   ├── test_returned_files.py
+│   └── test_subagent_filenames.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -911,14 +965,18 @@ python3 crystal-harness/scripts/test_test_changes.py
 python3 crystal-harness/scripts/test_merge_verdicts.py
 python3 crystal-harness/scripts/test_team_build.py
 python3 crystal-harness/scripts/test_rules.py
+python3 crystal-harness/scripts/test_returned_files.py
+python3 crystal-harness/scripts/test_subagent_filenames.py
 ```
 
 フレームワークも依存ライブラリも不要です。
 
-**担当範囲の guard に 110 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
+**担当範囲の guard に 133 ケース**: Claude Code が実際に送ってくる名前空間付きの `agent_type`、
 2つの拒否ポリシー、両エージェントを拒否する `codex-review.md` と `test-changes.json` の行、
 観点ごとのファイル、コスト台帳、自分の担当パスに留められ作業ツリー全体に効く git コマンドを
 禁じられた builder、自分の調査結果だけを書ける調査役、プロジェクトルール、
+`build-notes.md` と旧名 `report.md` の両方で守られる generator の報告、`reports/builder-<name>.md`
+だけを書ける builder の報告、どのエージェントも書けない captures、
 2つの抜け道(`..` によるディレクトリ遡りと `.harness/` 内に仕込んだシンボリックリンク)、大文字小文字の
 同一視、Bash の経路、正当な書き込みすべて、2つの fail-closed の経路。
 
@@ -945,9 +1003,23 @@ skip、`.only`、`xfail`、テストコマンドの差し替えや削除、テ�
 観点の fail がラウンドを fail にすること、再現結果は issue に注記されるだけで issue を消さないこと。
 加えて、観点の欠落から別コミットを採点したファイルまで、統合そのものを拒否する20通りあまり。
 
-**チームビルドに 55 ケース**: 2体の担当パスが重なりうるすべての形、分担表で使えないパスの書き方、
+**チームビルドに 60 ケース**: 2体の担当パスが重なりうるすべての形、分担表で使えないパスの書き方、
 1体の builder のファイルだけを取り込み他の builder のファイルには触れないコミット、`check` が報告する
-残り物とその宛先、どのエージェントにどの名前を許すかを決めるゲート。
+残り物とその宛先、`report` が書く報告(`build-notes.md` であって旧名ではない)、新しい名前が無いとき
+だけ読む builder の旧名の報告、どのエージェントにどの名前を許すかを決めるゲート。
+
+**差し戻されたファイルに 35 ケース**: 差し戻すファイルを持つエージェントの最終応答だけをそのまま保存し、
+どんな不正な入力でも exit 0 で終わる hook。各ブロックを1バイトも変えずに書く `place`(非 ASCII、
+行末の空白、コードフェンス、目印に似た行を含む本文)と、その journal への記録。何も書かずに拒否する
+場合として、generator からの verdict、evaluator からの generator の報告、終わりの目印がないブロック、
+同じファイルの二重、空、入れ子、どれか決められない複数の capture、ラウンドではないディレクトリ。
+旧名 `report.md` より `build-notes.md` を優先する `notes-path`。
+
+**エージェントに書かせるファイル名に 29 ケース**: `agents/`・`skills/`・`commands/`・`workflows/` に
+出てくるすべての `.md` の名前を、プレースホルダを展開したうえで、Claude Code がサブエージェントの
+`Write` に適用する規則と照らし合わせる。旧名 `report.md` に触れる箇所はすべて legacy と明記されて
+いること、スクリプト間で名前が一致していること、拒否された書き込みを Bash で回り込めと指示する
+プロンプトが残っていないことも確かめる。
 
 **プロジェクトルールに 29 ケース**: 同じラウンドを2回記録しても記録が倍にならないこと、何をもって
 「戻ってきた」とするか、トリガーのないルールや何にでも当たるトリガーの拒否、そして判定の処理。
@@ -961,7 +1033,12 @@ hook がどんな不正な入力でも exit 0 で終わり、読めない transc
 すること、区分ごとの料金計算、0.10.0 より前の `state.json` のエントリをトークン合計に入れないこと、
 予算上限とそれを強制する hook。
 
-プロンプトではなくこの9個をテストしているのは、この9個が*気づかれないまま*壊れるからです。
+プロンプトではなくこの11個をテストしているのは、この11個が*気づかれないまま*壊れるからです
+(最後の1つは例外的にプロンプトを検査しますが、それはプロンプトのこの性質が同じように気づかれないまま
+壊れるからです)。
+
+- エージェントに Claude Code が拒否するファイルを書かせると、拒否は run の途中で起き、ループが止まる。
+- `place` が甘くなると、あるエージェントの言葉が別のエージェントのファイルに入り込む。
 
 - contract の validator が拒否しなくなると、contract は再び上限を超えて膨らみ、run のすべての
   フェーズが遅く高くなる。

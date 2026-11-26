@@ -17,7 +17,7 @@ Subcommands:
                                           commit exactly that builder's owned paths
     team_build.py check                   after the builders stop: uncommitted work,
                                           paths changed that nobody owns, missing reports
-    team_build.py report                  join reports/<builder>.md into report.md
+    team_build.py report                  join reports/builder-<name>.md into build-notes.md
     team_build.py gate                    PreToolUse hook on Agent: who may be named what
 
 `.harness/split.json` is the ACTIVE plan. The ownership guard reads it to decide
@@ -58,6 +58,15 @@ ROLES = ("harness-planner", "harness-generator", "harness-evaluator", "harness-i
 NEVER_NAMED = ("harness-evaluator", "harness-investigator")
 BUILDER_PREFIX = "builder-"
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
+# The round's notes, which `report` writes for the evaluator, and their name
+# before 0.16.0. Claude Code's Write tool refuses a subagent's write to any .md
+# file whose name starts with report, summary, findings or analysis — before
+# hooks run — so neither the generator's notes nor a builder's report may be
+# named that way. A builder's report is reports/builder-<name>.md for the same
+# reason: under the old reports/<name>.md a builder named report-ui could not
+# write its own report.
+NOTES = "build-notes.md"
+LEGACY_NOTES = "report.md"
 ACTIVE = os.path.join(".harness", "split.json")
 DEFAULT_MAX_BUILDERS = 3
 
@@ -152,6 +161,10 @@ def validate_plan(plan, limit):
         if not isinstance(name, str) or not NAME_RE.match(name):
             errors.append(f"{where}.name: must match {NAME_RE.pattern}")
             name = f"#{i}"
+        elif name.startswith(BUILDER_PREFIX):
+            # The prefix is added for you; a name that carries it would also make
+            # its legacy report name another builder's new one.
+            errors.append(f"{where}.name: {name!r} — leave out the {BUILDER_PREFIX!r} prefix, it is added for you")
         elif name in seen_names:
             errors.append(f"{where}.name: {name!r} is used twice")
         seen_names.add(name)
@@ -203,6 +216,25 @@ def entries_of(builder):
     return [e for e in (normalize_own(x) for x in builder.get("owns", [])) if e[0] is not None]
 
 
+def builder_report_name(name):
+    """A builder's report file, inside <round dir>/reports/."""
+    return f"{BUILDER_PREFIX}{name}.md"
+
+
+def builder_report(round_dir, name):
+    """The path to read a builder's report from.
+
+    reports/builder-<name>.md; or, only when that is absent, the legacy
+    reports/<name>.md a builder wrote before 0.16.0. When neither exists, the
+    new path — where the report should be.
+    """
+    new = os.path.join(round_dir, "reports", builder_report_name(name))
+    legacy = os.path.join(round_dir, "reports", f"{name}.md")
+    if not os.path.isfile(new) and os.path.isfile(legacy):
+        return legacy
+    return new
+
+
 def find_builder(plan, name):
     for builder in plan["builders"]:
         if builder.get("name") == name:
@@ -229,11 +261,15 @@ def cmd_validate(args):
 
 
 def cmd_activate(args):
-    project_dir = os.path.abspath(args.project_dir)
+    # realpath on both sides: on macOS /var is a symlink to /private/var, and
+    # os.getcwd() (the default project dir) already returns the resolved form, so
+    # an absolute split path given through the symlink would otherwise appear to
+    # lie outside the project.
+    project_dir = os.path.realpath(args.project_dir)
     code = cmd_validate(args)
     if code != 0:
         return code
-    split_path = os.path.abspath(args.split)
+    split_path = os.path.realpath(args.split)
     parts = os.path.relpath(os.path.dirname(split_path), project_dir).split(os.sep)
     if len(parts) != 3 or parts[0] != ".harness" or parts[1] not in ("sprints", "final"):
         print("team_build: the split plan must be .harness/sprints/NN/split.json or .harness/final/NN/split.json", file=sys.stderr)
@@ -369,9 +405,9 @@ def cmd_check(args):
         if owner_of(path) is None:
             violations.append(f"nobody: {path} was committed but no builder owns it")
     for name in owners:
-        report = os.path.join(project_dir, plan["roundDir"], "reports", f"{name}.md")
+        report = builder_report(os.path.join(project_dir, plan["roundDir"]), name)
         if not os.path.isfile(report) or os.path.getsize(report) == 0:
-            violations.append(f"{BUILDER_PREFIX}{name}: no report at {plan['roundDir']}/reports/{name}.md")
+            violations.append(f"{BUILDER_PREFIX}{name}: no report at {plan['roundDir']}/reports/{builder_report_name(name)}")
 
     if violations:
         for line in violations:
@@ -401,15 +437,15 @@ def cmd_report(args):
     for builder in plan["builders"]:
         name = builder["name"]
         lines += ["", f"## Builder `{name}` — {builder.get('scope', '').strip()}", "", f"Owns: {', '.join(builder.get('owns', []))}", ""]
-        path = os.path.join(round_dir, "reports", f"{name}.md")
+        path = builder_report(round_dir, name)
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
                 lines.append(f.read().rstrip())
         else:
             lines.append("**This builder wrote no report.**")
-    with open(os.path.join(round_dir, "report.md"), "w", encoding="utf-8") as f:
+    with open(os.path.join(round_dir, NOTES), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"wrote {plan['roundDir']}/report.md from {len(plan['builders'])} builder report(s)")
+    print(f"wrote {plan['roundDir']}/{NOTES} from {len(plan['builders'])} builder report(s)")
     return 0
 
 

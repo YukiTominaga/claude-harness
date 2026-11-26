@@ -128,6 +128,11 @@ def main():
     validates("two builders with nothing pinned between them", with_builders(b("a", "a/**"), b("c", "c/**"), interfaces=()), False, "interfaces")
     validates("a duplicate builder name", with_builders(b("a", "a/**"), b("a", "c/**")), False, "used twice")
     validates("a builder name the gate could not match", with_builders(b("API Team", "a/**"), b("c", "c/**")), False, "name")
+    # The report is reports/builder-<name>.md, so a name may start with any word —
+    # including the ones Claude Code refuses as the start of a subagent's .md file.
+    validates("a builder named after a report is fine", with_builders(b("report-ui", "a/**"), b("summary", "c/**")), True)
+    validates("a name that already carries the builder- prefix",
+              with_builders(b("builder-api", "a/**"), b("c", "c/**")), False, "builder-")
     validates("a builder with no scope", with_builders({"name": "a", "owns": ["a/**"]}, b("c", "c/**")), False, "scope")
     validates("a builder that owns nothing", with_builders(b("a"), b("c", "c/**")), False, "owns")
     validates("no builders at all", {"interfaces": [], "builders": []}, False, "non-empty")
@@ -179,12 +184,14 @@ def main():
         check("check reports uncommitted work to the builder who owns it",
               proc.returncode == 2 and "builder-cli: uncommitted work in cli/main.py" in proc.stdout, proc.stdout)
         check("check reports a path nobody owns", "nobody: notes.txt" in proc.stdout, proc.stdout)
-        check("check reports each missing report",
-              "builder-api: no report" in proc.stdout and "builder-cli: no report" in proc.stdout, proc.stdout)
+        check("check reports each missing report, at its 0.16.0 name",
+              "builder-api: no report at .harness/final/01/reports/builder-api.md" in proc.stdout
+              and "builder-cli: no report" in proc.stdout, proc.stdout)
 
         run(root, "commit", "--builder", "cli", "-m", "feat: cli")
         os.remove(os.path.join(root, "notes.txt"))
-        write(root, ".harness/final/01/reports/api.md", "## What is complete\nThe API.\n")
+        write(root, ".harness/final/01/reports/builder-api.md", "## What is complete\nThe API.\n")
+        # A builder that reported under the legacy (pre-0.16.0) name still counts.
         write(root, ".harness/final/01/reports/cli.md", "## What is complete\nThe client.\n")
         proc = run(root, "check")
         check("check is clean once everything is committed, owned and reported", proc.returncode == 0 and "clean" in proc.stdout, proc.stdout)
@@ -197,9 +204,18 @@ def main():
               proc.returncode == 2 and "README.md was committed but no builder owns it" in proc.stdout, proc.stdout)
 
         proc = run(root, "report")
-        text = open(os.path.join(root, ".harness/final/01/report.md")).read()
-        check("report joins every builder's report under its name, with the pinned interfaces",
+        text = open(os.path.join(root, ".harness/final/01/build-notes.md")).read()
+        check("report joins every builder's report into build-notes.md, with the pinned interfaces",
               proc.returncode == 0 and "## Builder `api`" in text and "The client." in text and "POST /notes" in text, text[:300])
+        check("report does not write the legacy report.md", not os.path.exists(os.path.join(root, ".harness/final/01/report.md")))
+        check("a builder's report under the legacy name is read when the new one is absent", "The client." in text, text)
+
+        write(root, ".harness/final/01/reports/cli.md", "## What is complete\nStale, legacy.\n")
+        write(root, ".harness/final/01/reports/builder-cli.md", "## What is complete\nThe client, renamed.\n")
+        run(root, "report")
+        text = open(os.path.join(root, ".harness/final/01/build-notes.md")).read()
+        check("when both exist, the builder's new report is used and the legacy one ignored",
+              "The client, renamed." in text and "Stale, legacy." not in text, text)
 
         # ---- gate
         gen, ev = "crystal-harness:harness-generator", "crystal-harness:harness-evaluator"

@@ -73,7 +73,7 @@ flowchart TB
 | --- | --- | --- | --- | --- |
 | **Orchestrator** | The main session (not pinned) | `Agent`, `Read`, `Write`, `Bash`, … | `state.json`, `handoff.md`, `journal.md`, git commits of artifacts | writes app code, grades, reads or relays `codex-review.md` |
 | **harness-planner** | `claude-opus-5-5`, `high` | Read, Grep, Glob, Write, WebSearch, WebFetch | `spec.md` — and nothing else | scaffolds, installs, writes code |
-| **harness-generator** | `claude-opus-5-5`, `xhigh` | + Edit, Bash, Skill, TodoWrite | `contract.md` (draft / revision), application code + commits, `report.md` | writes `qa.md`, `verdict.json`, `screenshots/`, `codex-review.md`; edits criteria after building |
+| **harness-generator** | `claude-opus-5-5`, `xhigh` | + Edit, Bash, Skill, TodoWrite | `contract.md` (draft / revision), application code + commits, `build-notes.md` | writes `qa.md`, `verdict.json`, `screenshots/`, `codex-review.md`; edits criteria after building |
 | **harness-evaluator** | `claude-opus-5-5`, `high` | Read, Grep, Glob, Write, Bash, Skill, Playwright MCP — **no Edit** | contract review block, `qa.md`, `verdict.json`, `screenshots/` | writes anything outside `.harness/`; writes `codex-review.md` |
 | **codex review** | Codex CLI's own configured model (this plugin does not choose it) | — | `codex-review.md`, via `codex_review.py` | gates a round — it is evidence, not a verdict |
 
@@ -93,12 +93,12 @@ flowchart LR
     hgate --> gen
 
     gen["harness-generator<br/><i>decides: how to build</i>"] --> code[/"app code + commits"/]
-    gen --> report[/"report.md"/]
+    gen --> notes[/"build-notes.md"/]
 
     code --> codex["codex review<br/><i>raises findings</i>"]
     codex --> cr[/"codex-review.md"/]
 
-    spec & code & report & cr --> evalr["harness-evaluator<br/><i>decides: pass / fail</i>"]
+    spec & code & notes & cr --> evalr["harness-evaluator<br/><i>decides: pass / fail</i>"]
     evalr --> qa[/"qa.md"/]
     evalr --> vj[/"verdict.json"/]
 
@@ -153,7 +153,7 @@ the rest of the loop is unchanged.
 | What the product covers | harness-planner, **human approves** | the idea and the domain | `spec.md`: surfaces, feature ordering, non-goals, open questions |
 | Is the contract well-formed | `validate_contract.py` | criterion cap, scope size, unique ids | ok / one revision / escalate |
 | Is the contract testable and worth building | harness-evaluator | the `sprint-contract` five review questions | `accepted` · `accepted-with-amendments` · `changes-requested` |
-| How to implement | harness-generator | contract or spec, previous blocking issues | code, commits, `report.md` (complete / partial / not attempted) |
+| How to implement | harness-generator | contract or spec, previous blocking issues | code, commits, `build-notes.md` (complete / partial / not attempted) |
 | Is a codex finding real | harness-evaluator | reading the code | confirmed or rejected in `qa.md`; unconfirmed never blocks |
 | Did the round pass | harness-evaluator | running the app: tests, API, datastore, and the browser when enabled; six rubric dimensions against thresholds | `verdict.json`: `pass` / `fail`, scores, blocking issues with repro and cause, `verificationMode` |
 | Is that `pass` permitted | `validate_verdict.py` | schema, thresholds, mode rules (`degraded` never passes; headless needs something executed) | valid / sent back once |

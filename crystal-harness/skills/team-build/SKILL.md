@@ -52,7 +52,9 @@ live.
   exported function signatures, file formats, ports, environment variables. Pin
   what one builder's code will call in another's. Do not pin anything internal to
   one builder. If `spec.md` or the contract already fixes an interface, copy it.
-- `name` is lowercase letters, digits and hyphens; it becomes `builder-<name>`.
+- `name` is lowercase letters, digits and hyphens; it becomes `builder-<name>`,
+  and the builder's report `reports/builder-<name>.md`. Do not write the
+  `builder-` prefix into `name` yourself.
 - `scope` is one sentence saying what the builder delivers, in terms of the spec.
 
 `scripts/team_build.py validate` checks the plan; if it sends violations back,
@@ -91,11 +93,21 @@ tree, which adds these:
   by another builder: use another port for your check, and stop what you started.
 - **Answer the other builders.** A question from a peer about your interface is
   blocking them. Reply before you go on.
-- **Finish cleanly.** Write your report to `<round directory>/reports/<name>.md`
-  using the generator's `report.md` template (it is the one file you may write
-  under `.harness/`), commit everything you own, then tell the lead you are done:
-  the commits you made, your test results verbatim, what is partial, and any
-  interface change you agreed. Do not summarise the build as successful.
+- **Finish cleanly.** Write your report to
+  `<round directory>/reports/builder-<name>.md` using the generator's
+  `build-notes.md` template (it is the one file you may write under `.harness/`),
+  commit everything you own, then tell the lead you are done: the commits you
+  made, your test results verbatim, what is partial, and any interface change you
+  agreed. Do not summarise the build as successful.
+- **If that `Write` is rejected by a rule you did not expect**, do what your agent
+  definition says for `build-notes.md`, with `reports/builder-<name>.md` as the
+  name in both markers. Write it no other way. Tell the lead, in your done
+  message, that the report was refused and is in your final response. Then end
+  your turn with the `Write rejected:` line and the report between
+  `<!-- crystal-harness:begin reports/builder-<name>.md -->` and
+  `<!-- crystal-harness:end reports/builder-<name>.md -->`, and stop. A hook keeps
+  the text you end your turn with; a copy inside a message to the lead is not
+  what gets placed.
 
 When the builders have stopped, a script checks what they left: uncommitted work,
 a changed path nobody owns, a missing report. The lead will pass any such line
