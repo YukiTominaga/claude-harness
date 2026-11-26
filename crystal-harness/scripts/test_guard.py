@@ -64,7 +64,8 @@ def cases(root):
         ("namespaced gen -> bash into verdict", bash(ns_gen, "echo x > .harness/final/01/verdict.json", root), DENY),
         ("namespaced gen -> application source", write(ns_gen, "src/App.tsx", root), ALLOW),
         ("namespaced eval -> application source", write(ns_ev, "src/App.tsx", root), DENY),
-        ("namespaced eval -> final report.md", write(ns_ev, ".harness/final/01/report.md", root), DENY),
+        ("namespaced eval -> final report.md (legacy)", write(ns_ev, ".harness/final/01/report.md", root), DENY),
+        ("namespaced eval -> final build-notes.md", write(ns_ev, ".harness/final/01/build-notes.md", root), DENY),
         ("namespaced eval -> final verdict.json", write(ns_ev, ".harness/final/01/verdict.json", root), ALLOW),
         # The planner has no row in the ownership table, namespaced or not.
         ("namespaced planner -> spec.md", write("crystal-harness:harness-planner", ".harness/spec.md", root), ALLOW),
@@ -104,9 +105,13 @@ def cases(root):
         # would be writing the report on its own test deletions.
         ("gen -> final test-changes.json", write(gen, ".harness/final/02/test-changes.json", root), DENY),
         ("gen -> bash redirect into test-changes", bash(gen, "echo '{}' > .harness/final/02/test-changes.json", root), DENY),
-        # What the generator legitimately does.
-        ("gen -> sprints report.md", write(gen, ".harness/sprints/01/report.md", root), ALLOW),
-        ("gen -> final report.md", write(gen, ".harness/final/01/report.md", root), ALLOW),
+        # What the generator legitimately does. Its notes are build-notes.md since
+        # 0.16.0; the legacy report.md of an older run is guarded exactly alike.
+        ("gen -> sprints build-notes.md", write(gen, ".harness/sprints/01/build-notes.md", root), ALLOW),
+        ("gen -> final build-notes.md", write(gen, ".harness/final/01/build-notes.md", root), ALLOW),
+        ("namespaced gen -> final build-notes.md", write(ns_gen, ".harness/final/02/build-notes.md", root), ALLOW),
+        ("gen -> sprints report.md (legacy)", write(gen, ".harness/sprints/01/report.md", root), ALLOW),
+        ("gen -> final report.md (legacy)", write(gen, ".harness/final/01/report.md", root), ALLOW),
         ("gen -> application source", write(gen, "src/App.tsx", root), ALLOW),
         ("gen -> bash npm test", bash(gen, "npm test", root), ALLOW),
         # The evaluator may not edit what it grades — including via traversal or a
@@ -120,8 +125,11 @@ def cases(root):
         ("eval -> handoff.md", write(ev, ".harness/handoff.md", root), DENY),
         ("eval -> spec.md", write(ev, ".harness/spec.md", root), DENY),
         ("eval -> ledger.jsonl", write(ev, ".harness/ledger.jsonl", root), DENY),
-        ("eval -> sprints report.md", write(ev, ".harness/sprints/01/report.md", root), DENY),
-        ("eval -> final report.md", write(ev, ".harness/final/01/report.md", root), DENY),
+        ("eval -> sprints build-notes.md", write(ev, ".harness/sprints/01/build-notes.md", root), DENY),
+        ("eval -> final build-notes.md", write(ev, ".harness/final/01/build-notes.md", root), DENY),
+        ("eval -> sprints report.md (legacy)", write(ev, ".harness/sprints/01/report.md", root), DENY),
+        ("eval -> final report.md (legacy)", write(ev, ".harness/final/01/report.md", root), DENY),
+        ("eval -> BUILD-NOTES.MD, other case", write(ev, ".harness/Sprints/01/BUILD-NOTES.MD", root), DENY),
         ("eval -> stray note in .harness", write(ev, ".harness/notes.md", root), DENY),
         # The evaluator weighs codex-review.md; editing it would be editing the
         # evidence it is about to cite.
@@ -162,8 +170,15 @@ def cases(root):
         ("builder -> a path nobody owns", write("builder-api", "README.md", root), DENY),
         ("builder -> a sibling of its file", write("builder-api", "app.py.bak", root), DENY),
         ("builder -> ../ escape into another's dir", write("builder-api", "tests/api/../../cli/main.py", root), DENY),
-        ("builder -> its own report", write("builder-api", ".harness/final/01/reports/api.md", root), ALLOW),
-        ("builder -> another builder's report", write("builder-api", ".harness/final/01/reports/cli.md", root), DENY),
+        ("builder -> its own report", write("builder-api", ".harness/final/01/reports/builder-api.md", root), ALLOW),
+        ("builder -> another builder's report", write("builder-api", ".harness/final/01/reports/builder-cli.md", root), DENY),
+        # Before 0.16.0 a builder's report was reports/<name>.md — a builder named
+        # report-ui could not write it (Claude Code refuses report*.md to subagents).
+        ("builder -> its report under the legacy name", write("builder-api", ".harness/final/01/reports/api.md", root), DENY),
+        ("builder report-ui -> its own report", write("builder-report-ui", ".harness/final/01/reports/builder-report-ui.md", root), ALLOW),
+        ("builder report-ui -> the legacy name", write("builder-report-ui", ".harness/final/01/reports/report-ui.md", root), DENY),
+        ("builder -> the round's build-notes.md", write("builder-api", ".harness/final/01/build-notes.md", root), DENY),
+        ("builder -> the round's report.md (legacy)", write("builder-api", ".harness/final/01/report.md", root), DENY),
         ("builder -> the active split plan", write("builder-api", ".harness/split.json", root), DENY),
         ("builder -> the round's split plan", write("builder-api", ".harness/final/01/split.json", root), DENY),
         ("builder -> verdict.json", write("builder-api", ".harness/final/01/verdict.json", root), DENY),
@@ -193,7 +208,21 @@ def cases(root):
         ("investigator -> bash running the app", bash("harness-investigator", "python3 app.py & curl -s localhost:8765/notes", root), ALLOW),
         ("gen -> a diagnosis", write(gen, ".harness/final/02/diagnosis/B-api-1/diagnosis.md", root), DENY),
         ("eval -> a diagnosis", write(ev, ".harness/final/02/diagnosis/B-api-1/diagnosis.md", root), DENY),
-        ("eval -> a builder's report", write(ev, ".harness/final/01/reports/api.md", root), DENY),
+        ("eval -> a builder's report", write(ev, ".harness/final/01/reports/builder-api.md", root), DENY),
+        ("eval -> a builder's report (legacy name)", write(ev, ".harness/final/01/reports/api.md", root), DENY),
+        ("investigator -> build-notes.md", write("harness-investigator", ".harness/final/02/build-notes.md", root), DENY),
+        ("investigator -> report.md (legacy)", write("harness-investigator", ".harness/final/02/report.md", root), DENY),
+        # ---- captures: an agent's final response, kept by a hook, from which the
+        # orchestrator places a file the agent could not write. No agent writes it:
+        # a forged capture would put words in another agent's mouth.
+        ("gen -> a capture", write(gen, ".harness/captures/a1.json", root), DENY),
+        ("namespaced gen -> a placed capture", write(ns_gen, ".harness/captures/placed/a1.json", root), DENY),
+        ("gen -> bash into a capture", bash(gen, "echo '{}' > .harness/captures/a1.json", root), DENY),
+        ("gen -> bash in the app's own captures dir", bash(gen, "ls src/captures/ && npm test", root), ALLOW),
+        ("gen -> app source named captures", write(gen, "src/captures/index.ts", root), ALLOW),
+        ("eval -> a capture", write(ev, ".harness/captures/a1.json", root), DENY),
+        ("builder -> a capture", write("builder-api", ".harness/captures/b1.json", root), DENY),
+        ("investigator -> a capture", write("harness-investigator", ".harness/captures/i1.json", root), DENY),
         ("eval -> the round's split plan", write(ev, ".harness/final/01/split.json", root), DENY),
         # Agents outside the harness are none of the guard's business.
         ("unrelated agent -> verdict.json", {"cwd": root, "tool_name": "Write", "tool_input": {"file_path": ".harness/sprints/01/verdict.json"}}, ALLOW),
@@ -212,6 +241,7 @@ def main():
             json.dump({"builders": [
                 {"name": "api", "scope": "the API", "owns": ["app.py", "tests/api/**"]},
                 {"name": "cli", "scope": "the client", "owns": ["cli/**"]},
+                {"name": "report-ui", "scope": "the report screen", "owns": ["ui/**"]},
             ], "interfaces": ["GET /notes"], "roundDir": ".harness/final/01", "base": "x"}, f)
         os.symlink(os.path.join(root, "src"), os.path.join(root, ".harness", "escape"))
 

@@ -31,7 +31,10 @@ Target, from `$1`:
    `harness.browserVerification` itself and picks its verification mode from it —
    do not tell it which mode to use, and do not override the config for one run
    without saying so in the journal.
-4. Read the returned `verdict.json`, validate it with `validate_verdict.py` —
+4. If the evaluator handed `qa.md` or `verdict.json` back in its final response
+   instead of writing it, place it first, exactly as `/crystal-harness:build`'s "A
+   file an agent handed back" says — never by copying it out yourself.
+   Read the returned `verdict.json`, validate it with `validate_verdict.py` —
    never by eye — append a journal entry, append the round to `state.json`
    (`sprints[].verdicts` or `finalRounds`) **including its
    `environment.verificationMode`**. The evaluator's cost is already in

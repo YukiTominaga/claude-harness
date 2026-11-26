@@ -38,6 +38,11 @@ resumed agent that guesses wrong rebuilds working code a different way.
   → report it with `git log --oneline -10` and ask.
 - `git status` shows uncommitted changes while the phase is `qa` or `passed` → say
   so; something was edited outside the loop.
+- A `.json` file directly in `.harness/captures/` (not under `placed/`) → an agent
+  handed back a file it could not write, and the session ended before it was
+  placed. Name the agent and its type from the file and ask. On continue, place it
+  first, exactly as `/crystal-harness:build`'s "A file an agent handed back" says —
+  never by copying it out yourself.
 - `phase: "blocked"` → print `blockedReason` and the last verdict's blocking issues,
   and stop. A block is cleared by a human decision, not by resuming — tell them the
   decision is made by re-invoking `/crystal-harness:build`, which asks

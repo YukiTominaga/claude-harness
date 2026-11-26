@@ -10,9 +10,11 @@ harness-protocol skill. The design of the harness assumes two boundaries hold:
 - The evaluator never edits what it grades. Its writes are confined to its own
   round directories under .harness/sprints/ and .harness/final/ (where
   contract.md review blocks, qa.md, verdict.json and screenshots live) and the
-  Playwright scratch area .harness/artifacts/. It may not write report.md —
-  that file is the generator's testimony — nor codex-review.md, which is an
-  input it reads, not an artifact it authors — nor anything outside .harness/.
+  Playwright scratch area .harness/artifacts/. It may not write the
+  generator's notes — build-notes.md, or the legacy report.md of a run started
+  before 0.16.0, guarded alike — which are the generator's testimony, nor
+  codex-review.md, which is an input it reads, not an artifact it authors —
+  nor anything outside .harness/.
 
 codex-review.md belongs to neither of them. The orchestrator commissions it from
 a different vendor's model before the evaluator is spawned. A generator that can
@@ -76,10 +78,22 @@ TEST_CHANGES_LEAF = "test-changes.json"
 # The project rules this round's diff triggered, written by scripts/rules.py.
 RULES_TO_CHECK_LEAF = "rules-to-check.json"
 COMMISSIONED_LEAVES = (CODEX_REVIEW_LEAF, TEST_CHANGES_LEAF, RULES_TO_CHECK_LEAF)
+# The generator's notes. Until 0.16.0 they were report.md, which Claude Code's
+# Write tool refuses to any subagent (it rejects /^(REPORT|SUMMARY|FINDINGS|
+# ANALYSIS).*\.md$/i before hooks run). A round directory from an older run can
+# still hold the legacy name, so both are guarded alike: the generator may
+# write either, the evaluator reads them, nobody else writes them.
+NOTES = "build-notes.md"
+LEGACY_NOTES = "report.md"
 # In a round directory the evaluator reads these and never writes them: the
-# generator's testimony (report.md, a team build's split plan and per-builder
+# generator's testimony (its notes, a team build's split plan and per-builder
 # reports), the commissioned evidence, and an investigator's diagnosis.
-EVALUATOR_READ_ONLY_LEAVES = ("report.md", "split.json", "reports", "diagnosis") + COMMISSIONED_LEAVES
+EVALUATOR_READ_ONLY_LEAVES = (NOTES, LEGACY_NOTES, "split.json", "reports", "diagnosis") + COMMISSIONED_LEAVES
+# .harness/captures/ holds an agent's final response, kept verbatim by a hook,
+# from which the orchestrating command places a file the agent could not write
+# (scripts/returned_files.py). An agent that could write there could put a file
+# in another agent's mouth, so none may.
+CAPTURES_LEAF = "captures"
 # The diagnose workflow's working directory inside a round directory.
 DIAGNOSIS_LEAF = "diagnosis"
 
@@ -186,6 +200,11 @@ def is_commissioned(parts):
     )
 
 
+def is_capture(parts):
+    """.harness/captures/..."""
+    return len(parts) >= 3 and parts[0] == ".harness" and parts[1] == CAPTURES_LEAF
+
+
 def is_orchestrator_file(parts):
     """.harness/{state.json,handoff.md,journal.md,config.json,spec.md,ledger.jsonl}"""
     return len(parts) == 2 and parts[0] == ".harness" and parts[1] in ORCHESTRATOR_LEAVES
@@ -196,9 +215,9 @@ def evaluator_may_write(parts):
 
     - .harness/artifacts/... — Playwright scratch output.
     - .harness/{sprints,final}/NN/... — its round artifacts, including the
-      review block it appends to contract.md, but never report.md, which is
-      the generator's completion report, and never codex-review.md, which is
-      an independent review it is supposed to weigh, not edit.
+      review block it appends to contract.md, but never the generator's notes
+      (build-notes.md, or the legacy report.md), and never codex-review.md,
+      which is an independent review it is supposed to weigh, not edit.
     """
     if not parts or parts[0] != ".harness":
         return False
@@ -264,6 +283,11 @@ def main():
                     "orchestrating command commissions it as independent evidence "
                     "about your diff; read it with Read if you need it."
                 )
+        if ".harness" in lowered and f"{CAPTURES_LEAF}/" in lowered:
+            deny(
+                "harness-generator may not touch .harness/captures/ through the shell. It holds "
+                "agents' final responses, kept by a hook; nothing an agent writes belongs there."
+            )
         for leaf in ("state.json", "handoff.md", "journal.md", "ledger.jsonl"):
             if leaf in lowered:
                 deny(
@@ -302,7 +326,7 @@ def main():
         if is_verdict_artifact(parts):
             deny(
                 f"harness-generator may not write {rel}. Only harness-evaluator "
-                "produces verdicts. Report what you built in report.md; the verdict is "
+                "produces verdicts. Report what you built in build-notes.md; the verdict is "
                 "not yours to write."
             )
         if is_commissioned(parts):
@@ -321,21 +345,30 @@ def main():
             deny(
                 f"harness-generator may not write {rel}. The orchestrating command "
                 "owns the run state (state.json, handoff.md, journal.md, config.json, "
-                "spec.md) and a hook owns ledger.jsonl. Report what you did in report.md and let the caller record it."
+                "spec.md) and a hook owns ledger.jsonl. Report what you did in build-notes.md and let the caller record it."
+            )
+        if is_capture(parts):
+            deny(
+                f"harness-generator may not write {rel}. .harness/captures/ holds agents' final "
+                "responses as a hook kept them. If a Write of yours was refused by a rule you did "
+                "not expect, hand the file back in your final response instead (see your agent "
+                "definition)."
             )
 
     if builder:
         if parts and parts[0] == ".harness":
+            # reports/builder-<name>.md, never reports/<name>.md: a builder named
+            # report-ui would be refused that name by Claude Code itself.
             own_report = (
                 len(parts) == 5
                 and parts[1] in ("sprints", "final")
                 and parts[3] == "reports"
-                and parts[4] == f"{builder}.md".casefold()
+                and parts[4] == f"{BUILDER_PREFIX}{builder}.md".casefold()
             )
             if not own_report:
                 deny(
                     f"{BUILDER_PREFIX}{builder} may not write {rel}. Inside .harness/ a builder "
-                    f"writes one file: its own report, <round dir>/reports/{builder}.md."
+                    f"writes one file: its own report, <round dir>/reports/{BUILDER_PREFIX}{builder}.md."
                 )
             allow()
         owned = builder_owned(real_cwd, builder)
@@ -368,8 +401,8 @@ def main():
             "round artifacts under .harness/sprints/NN/ or .harness/final/NN/ "
             "(qa.md, verdict.json, screenshots, lenses/, the contract review block) and "
             ".harness/artifacts/. It does not edit what it grades and does not "
-            "write report.md, codex-review.md, test-changes.json, or the run state. Record defects as "
-            "blocking issues in qa.md instead."
+            "write the generator's notes (build-notes.md, or the legacy report.md), codex-review.md, "
+            "test-changes.json, or the run state. Record defects as blocking issues in qa.md instead."
         )
 
     allow()

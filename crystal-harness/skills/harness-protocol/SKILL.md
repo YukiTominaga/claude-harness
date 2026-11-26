@@ -27,12 +27,13 @@ A fresh agent reading complete files does not.
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only log of decisions and events
 ├── artifacts/           # Playwright MCP scratch output, browser mode only (gitignored)
+├── captures/            # final responses that handed back a file the agent could not write
 ├── sprints/
 │   └── 01/
 │       ├── contract.md      # generator proposes, evaluator accepts
-│       ├── report.md        # generator's completion report + self-check
+│       ├── build-notes.md   # generator's notes: what is complete / partial + self-check
 │       ├── split.json       # team build only: the split plan the generator proposed
-│       ├── reports/         # team build only: one report per builder
+│       ├── reports/         # team build only: builder-<name>.md, one per builder
 │       ├── codex-review.md  # independent review of the diff, orchestrator-owned
 │       ├── test-changes.json # what the round did to the tests, orchestrator-owned
 │       ├── rules-to-check.json # the project rules this round's diff triggers
@@ -47,7 +48,7 @@ A fresh agent reading complete files does not.
     └── 01/                  # one directory per end-of-run QA round
         ├── qa.md
         ├── verdict.json
-        ├── report.md        # generator's report for this round's fixes
+        ├── build-notes.md   # generator's notes for this round's fixes
         ├── codex-review.md
         ├── test-changes.json
         ├── lenses/
@@ -62,6 +63,16 @@ and `qa.md` from them. The `evaluation-lenses` skill defines the lens files.
 `codex-review.md` is present only when the `codex` plugin is installed and
 `harness.codexReview` is not `false`; `screenshots/` only in `browser` mode. Their
 absence is normal and means what it says — nobody should infer a failure from it.
+
+**Before 0.16.0, `build-notes.md` was the now-legacy `report.md`.** Claude Code refuses a
+subagent's `Write` to any `.md` file whose name starts with `report`, `summary`,
+`findings` or `analysis` — before permission rules and hooks run — so the
+generator could not write its own notes under the old name. A run started before
+0.16.0 can still have round directories holding the legacy `report.md`. Whoever
+reads the generator's notes reads `build-notes.md`, and the legacy `report.md` only
+when `build-notes.md` is absent; when both exist, the legacy file is ignored.
+`scripts/returned_files.py notes-path <round dir>` applies that rule. The guard
+protects both names alike.
 
 Sprint and final-round directories are zero-padded two-digit. In `useSprints: false`
 mode `sprints/` stays empty: the run is planner → one long build → `final/01`,
@@ -78,9 +89,10 @@ assessment asks whether the product `spec.md` described actually exists.
 | `config.json` | `/crystal-harness:init`, the human | everyone |
 | `spec.md` | planner | generator, evaluator |
 | `sprints/NN/contract.md` | generator (proposal), evaluator (review block) | both |
-| `sprints/NN/report.md`, `final/NN/report.md` | generator — or, in a team build, `scripts/team_build.py report`, joining the builders' own | evaluator |
+| `sprints/NN/build-notes.md`, `final/NN/build-notes.md` (and the legacy `report.md`, read only when `build-notes.md` is absent) | generator — or, in a team build, `scripts/team_build.py report`, joining the builders' own | evaluator |
 | `*/split.json` (in a round directory) | generator, in the splitting phase only | `team_build.py`, the orchestrating command |
-| `*/reports/<name>.md` | the builder `builder-<name>`, and nobody else | `team_build.py report` |
+| `*/reports/builder-<name>.md` | the builder `builder-<name>`, and nobody else | `team_build.py report` |
+| `captures/<agent id>.json` | the `SubagentStop` hook (`scripts/returned_files.py capture`); `returned_files.py place` moves it to `captures/placed/` | `returned_files.py place`, run by the orchestrating command — no agent |
 | `.harness/split.json` | `scripts/team_build.py activate` / `deactivate`, run by the orchestrating command | the guard, the builders (read-only) |
 | `*/codex-review.md` | the orchestrating command (via `scripts/codex_review.py`) | evaluator (read-only) |
 | `*/test-changes.json` | the orchestrating command (via `scripts/test_changes.py`) | evaluator (read-only), `validate_verdict.py` |
@@ -98,6 +110,15 @@ the generator is blocked from verdict artifacts in both `sprints/NN/` and
 `final/NN/` and from the orchestrator-owned files (`state.json`, `handoff.md`,
 `journal.md`, `config.json`, `spec.md`) and from `ledger.jsonl`; the evaluator is blocked from everything
 except its round artifacts, the contract review block, and `.harness/artifacts/`.
+No agent may write `captures/`.
+
+A file in a round directory can also be put there by the orchestrating command,
+when a rule outside this plugin refused the agent's own `Write`: the agent hands
+the file back between marker lines in its final response, a hook keeps that
+response verbatim, and `returned_files.py place` writes the block byte for byte —
+only a file that agent's role owns (generator: `build-notes.md`; `builder-<name>`:
+`reports/builder-<name>.md`; evaluator: `qa.md`, `verdict.json`). The content is
+still the agent's; nobody retypes it. `commands/build.md` has the procedure.
 
 In a team build the generators are agent-team teammates named `builder-<name>`.
 Each is held to the generator's rules and, on top of them, to the paths the active

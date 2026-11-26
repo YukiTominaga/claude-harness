@@ -94,6 +94,13 @@ and leave it **disabled**. The symptom is every `/crystal-harness:*` command com
 back `Unknown command` in the next session. If `enabled` is false, run
 `claude plugin enable crystal-harness`. Then restart.
 
+**0.16.0 renamed the generator's notes from `report.md` to `build-notes.md`**, and a
+builder's report from `reports/<name>.md` to `reports/builder-<name>.md`. A run
+started on an older version keeps working after the update: whoever reads a
+round's notes reads `build-notes.md`, falls back to the legacy `report.md` only when
+`build-notes.md` is absent, and ignores the legacy file when both exist. See
+"[`build-notes.md`, formerly `report.md`](#build-notesmd-formerly-reportmd)".
+
 ## Quickstart
 
 ```
@@ -134,9 +141,10 @@ agent's conversation.
 ├── handoff.md           # rolling context-reset handoff artifact
 ├── journal.md           # append-only human-readable log
 ├── artifacts/           # Playwright scratch output, browser mode only (gitignored)
+├── captures/            # final responses that handed back a file the agent could not write
 ├── sprints/01/
 │   ├── contract.md      # generator proposes, evaluator accepts
-│   ├── report.md        # generator's completion report + self-check
+│   ├── build-notes.md   # generator's notes: complete / partial / not attempted + self-check
 │   ├── codex-review.md  # independent review of the diff (when codex is installed)
 │   ├── test-changes.json # what the round did to the tests, from a script
 │   ├── rules-to-check.json # the project rules this round's diff triggers
@@ -148,7 +156,7 @@ agent's conversation.
 └── final/01/            # the end-of-run assessment, one directory per round
     ├── qa.md
     ├── verdict.json
-    ├── report.md
+    ├── build-notes.md
     ├── codex-review.md
     ├── test-changes.json
     ├── lenses/
@@ -157,6 +165,48 @@ agent's conversation.
 
 Full definitions, both JSON Schemas, and the `handoff.md` template live in the
 `crystal-harness:harness-protocol` skill.
+
+### `build-notes.md`, formerly `report.md`
+
+Until 0.16.0 the generator was told to write `report.md`. Claude Code's `Write`
+tool refuses a subagent's write to any `.md` file whose name matches
+`/^(REPORT|SUMMARY|FINDINGS|ANALYSIS).*\.md$/i` ("Subagents should return findings
+as text, not write report files"), and it checks that while validating the tool
+input — before permission rules and `PreToolUse` hooks — so no allow rule, hook or
+permission mode lets the write through (confirmed on Claude Code 2.1.332). Every
+generator write of its notes was refused. The prompt's fallback, writing the same
+content through a Bash heredoc, was in turn stopped by auto mode as undermining
+oversight, and the loop halted.
+
+- **The name.** `build-notes.md` contains none of the four words anywhere, not
+  just at the start, so a rule that widened from "starts with" to "contains" would
+  not catch it either; it says what the file is (the build's own account, not a
+  verdict), and it cannot be mistaken for `handoff.md`, `journal.md` or `qa.md`.
+  A builder's report is `reports/builder-<name>.md`, so a builder may be called
+  `report-ui` or `summary` and still write its own report.
+- **Older runs.** A plugin update can land mid-run, so a round directory may still
+  hold the legacy `report.md`. The evaluator, `commands/build.md` (through
+  `scripts/returned_files.py notes-path`) and `team_build.py` read `build-notes.md`,
+  and the legacy name only when `build-notes.md` is absent; with both present the
+  legacy file is ignored. A builder's legacy `reports/<name>.md` is read the same
+  way. The guard protects both names alike: the evaluator may only read them, and
+  only the generator may write them.
+- **When a `Write` is refused anyway.** No prompt tells an agent to route around a
+  refusal any more — not through Bash, not under another name. An agent whose
+  `Write` is refused by a rule from outside the plugin ends its final response with
+  a `Write rejected:` line and the file between
+  `<!-- crystal-harness:begin <name> -->` and `<!-- crystal-harness:end <name> -->`,
+  and stops. A `SubagentStop` hook keeps that response verbatim in
+  `.harness/captures/`; the orchestrator runs `returned_files.py place`, which
+  writes each block byte for byte — only a file that agent's role owns — journals
+  where it came from, and otherwise writes nothing and the run stops for the human.
+  The orchestrator never retypes the content: the notes are the generator's
+  testimony, and a copy it made would be its own words. There is no human approval
+  on the mechanical path, because it decides nothing; the human is told in the
+  journal and the round's report.
+- `scripts/test_subagent_filenames.py` collects every `.md` name in `agents/`,
+  `skills/`, `commands/` and `workflows/`, including templated ones, and fails on
+  any Claude Code would refuse — so the same mistake cannot ship again unnoticed.
 
 `handoff.md` is the load-bearing artifact. It must be sufficient for a completely
 fresh agent with zero prior context to continue: current goal, what is done *and
@@ -220,6 +270,13 @@ things it blocks silently destroys the design:
   that would catch it.
 - `harness-investigator` writing anywhere but a round's `diagnosis/` directory —
   it diagnoses, and a diagnosis made on a tree it altered is of a different tree.
+- Anyone but the generator writing its notes — `build-notes.md`, or the legacy
+  `report.md` of an older run, guarded alike — and any builder writing a report
+  other than its own `reports/builder-<name>.md`. The notes are the generator's
+  testimony; the evaluator reads them and never edits them.
+- **Any agent** writing `.harness/captures/` — the final responses the orchestrator
+  places handed-back files from. A forged capture would put words in another
+  agent's mouth.
 
 The same hook keeps both of them out of the orchestrator's files — `state.json`,
 `handoff.md`, `journal.md`, `config.json`, `spec.md` — and out of `ledger.jsonl`:
@@ -230,7 +287,9 @@ general logging hook; neither prevents a named failure, and scaffolding that
 prevents nothing is the overhead this whole design argues against. The two other
 hooks each answer one: `SessionStart` says a run already exists here, and
 `SubagentStop` records the cost ledger above, because an entry a model has to
-remember to write is an entry that goes missing.
+remember to write is an entry that goes missing — and keeps the final response of
+an agent that handed a file back, so that the file is placed from what the agent
+wrote rather than from what the orchestrator copied.
 
 How it behaves at the edges, and why:
 
@@ -372,8 +431,8 @@ default):
    (`accepted-with-amendments`); only four kinds of finding send the contract back,
    and a revision edits just what they name. At most two rounds, then it escalates.
 3. **Implement.** A fresh generator builds, commits at every checkpoint, runs the
-   project's own build/typecheck/tests, fixes its own failures, and writes a
-   `report.md` stating what is complete, what is partial, and what it did not attempt.
+   project's own build/typecheck/tests, fixes its own failures, and writes
+   `build-notes.md` stating what is complete, what is partial, and what it did not attempt.
 4. **Independent review.** If the `codex` plugin is available, the sprint's diff is
    reviewed by a non-Claude model and the result is written to `codex-review.md`,
    before the evaluator exists. Absent or unauthenticated codex → one line and the
@@ -607,7 +666,8 @@ are checked rather than asked for.
 5. When they stop, `team_build.py check` lists what the plan does not allow —
    uncommitted work, a changed path nobody owns, a missing report — addressed to
    the builder who can fix it. Then `team_build.py report` joins the builders'
-   own reports into the `report.md` the evaluator reads.
+   own reports (`reports/builder-<name>.md`) into the `build-notes.md` the
+   evaluator reads.
 
 Fixes after a failed QA round are not split. They work a short list of blocking
 issues and go to one generator, as always. Builders are never reused across
@@ -870,6 +930,7 @@ crystal-harness/
 │   ├── test_changes.py                  # what a round did to the tests: deleted, skipped, re-pointed
 │   ├── merge_verdicts.py                # lens verdicts → one verdict.json + qa.md, or no verdict at all
 │   ├── team_build.py                    # split plan: validate, activate, per-builder commit, check, naming gate
+│   ├── returned_files.py                # a file an agent handed back: SubagentStop capture, place, notes-path
 │   ├── rules.py                         # issue log, rule candidates, approved rules, which rules a diff triggers
 │   ├── validate_verdict.py              # verdict.json schema + what a pass may mean per mode
 │   ├── validate_contract.py             # contract.md criterion cap, scope size, id integrity
@@ -882,7 +943,9 @@ crystal-harness/
 │   ├── test_test_changes.py
 │   ├── test_merge_verdicts.py
 │   ├── test_team_build.py
-│   └── test_rules.py
+│   ├── test_rules.py
+│   ├── test_returned_files.py
+│   └── test_subagent_filenames.py
 ├── .mcp.json                            # Playwright MCP
 └── README.md
 ```
@@ -903,13 +966,15 @@ python3 crystal-harness/scripts/test_test_changes.py
 python3 crystal-harness/scripts/test_merge_verdicts.py
 python3 crystal-harness/scripts/test_team_build.py
 python3 crystal-harness/scripts/test_rules.py
+python3 crystal-harness/scripts/test_returned_files.py
+python3 crystal-harness/scripts/test_subagent_filenames.py
 ```
 
 No framework and no dependencies.
 
-**110 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
+**133 cases over the ownership guard**: the plugin-namespaced `agent_type` Claude
 Code actually sends, both denial policies, the `codex-review.md`
-and `test-changes.json` rows that deny both agents, the lens files, the cost ledger, a builder teammate held to its own paths and kept off tree-wide git commands, an investigator held to its findings, the project rules, both escape routes (`..` traversal and a symlink
+and `test-changes.json` rows that deny both agents, the lens files, the cost ledger, a builder teammate held to its own paths and kept off tree-wide git commands, an investigator held to its findings, the project rules, the generator's notes under both `build-notes.md` and the legacy `report.md`, a builder's report under `reports/builder-<name>.md` only, the captures no agent may write, both escape routes (`..` traversal and a symlink
 planted inside `.harness/`), case-folding, the Bash path, every legitimate write,
 and both fail-closed paths.
 
@@ -941,10 +1006,27 @@ kept, one failing lens failing the round, a reproduction result annotating but
 never removing an issue — and twenty-odd ways of refusing to merge at all, from a
 missing lens to one that graded a different commit.
 
-**55 cases over the team build**: every way two builders' paths can overlap, the
+**60 cases over the team build**: every way two builders' paths can overlap, the
 path forms a plan may not use, a commit that takes exactly one builder's files and
-leaves another's untouched, the leftovers `check` reports and to whom, and the
-gate that decides which agent may carry which name.
+leaves another's untouched, the leftovers `check` reports and to whom, the notes
+`report` writes (`build-notes.md`, never the legacy name), a builder's legacy report
+read only when its new one is absent, and the gate that decides which agent may
+carry which name.
+
+**35 cases over handed-back files**: the hook keeping a final response verbatim
+only for an agent that has a file to hand back, and exiting 0 on every malformed
+input; `place` writing each block byte for byte — non-ASCII, trailing spaces, a
+fenced block and a marker-lookalike inside — journalling it, and refusing,
+having written nothing, a generator's verdict, an evaluator's notes, a block with
+no end, twice, empty or nested, two captures it would have to guess between, and a
+directory that is not a round's; and `notes-path` preferring `build-notes.md` over
+the legacy `report.md`.
+
+**29 cases over the file names agents are told to write**: every `.md` name in
+`agents/`, `skills/`, `commands/` and `workflows/`, placeholders expanded, against
+the rule Claude Code applies to a subagent's `Write`; every mention of the legacy
+`report.md` marked as legacy; the scripts agreeing on the names; and no prompt left
+telling an agent to route a refused write through Bash.
 
 **29 cases over the project rules**: a round recorded twice not doubling the log,
 what counts as having come back, a rule with no trigger or a trigger that matches
@@ -959,8 +1041,11 @@ recording an unreadable transcript as `null` rather than zero, per-category
 pricing, entries from a pre-0.10.0 `state.json` kept out of token totals, and the budget
 caps with the hook that enforces them.
 
-These nine are tested and the prompts are not, because these nine fail
-*silently*. If the rule matcher stops triggering a rule, the evaluator is never
+These eleven are tested and the prompts are not, because these eleven fail
+*silently* — the last one is the exception that checks the prompts, for the one
+property of a prompt that fails the same way. If an agent is told to write a file
+Claude Code refuses it, the refusal arrives mid-run and the loop halts. If `place`
+turns lenient, one agent's words land in another's file. If the rule matcher stops triggering a rule, the evaluator is never
 asked the question the rule exists to ask. If the split-plan validator starts accepting overlapping paths, the
 build still completes — with one builder's work replaced by another's. If the test-change report stops noticing a deleted test, the suite
 goes back to vouching for itself. If the merge turns lenient, a round that

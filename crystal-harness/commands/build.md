@@ -91,6 +91,72 @@ starting any harness agent or the `evaluate` workflow. If you see that denial yo
 skipped the check above; do what it says. Only the human raising or removing the
 cap in `config.json` lets the run continue — never edit the cap yourself.
 
+## A file an agent handed back
+
+An agent's `Write` can be refused by a rule outside this plugin. One such rule is
+known and designed around: Claude Code refuses a subagent's write to any `.md`
+file whose name starts with `report`, `summary`, `findings` or `analysis` — the
+reason the generator's notes are `build-notes.md` ("The generator's notes" below).
+The agents are told never to route around a refusal. Instead the agent ends its
+final response with a line `Write rejected: <path> — <message>` and the file's
+content between `<!-- crystal-harness:begin <name> -->` and
+`<!-- crystal-harness:end <name> -->`, and stops. By the time you see that
+response, a `SubagentStop` hook has kept it, verbatim, under `.harness/captures/`.
+
+When a generator's, a builder's or an evaluator's final response carries such a
+block, do this before anything else in the round:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/returned_files.py" place --round-dir <round dir> --agent-id <id>
+```
+
+`<id>` is the agent id the Agent tool result gave you; for a builder, pass
+`--agent builder-<name>` instead. With neither, `place` takes the one capture
+waiting and refuses when there is more than one. It writes each block byte for
+byte into the round directory — and only a file that agent's role owns:
+`build-notes.md` for a generator, `reports/builder-<name>.md` for that builder,
+`qa.md` and `verdict.json` for an evaluator. It appends where the content came
+from to `journal.md` — the agent, each file's size and sha256, the rejection the
+agent quoted — and moves the capture to `.harness/captures/placed/`, where it
+stays as the record. That journal entry is the provenance; do not write another.
+
+- **Exit 0** — placed. Carry on with the round exactly as if the agent had written
+  the file. In the round's report block, name the file and quote the rejection:
+  a rule outside the plugin refusing a harness file is something the human needs
+  to hear, because the plugin should stop asking for that name.
+- **Exit 1** — nothing was written, and it printed why: no capture, a malformed
+  block, a file that role does not own. Stop: set `phase: "blocked"` with the
+  printed lines as `blockedReason`, journal it, and ask the human. Do not send the
+  agent back to try another way.
+
+**Never write, copy or summarise that content yourself** — not with `Write`, not
+with `Bash`, not by retyping it from the agent's response, and not by repairing a
+malformed block. The generator's notes are the generator's testimony; `qa.md` and
+`verdict.json` are the evaluator's verdict. A copy you made is your version of
+their words, and the next agent would be grading, or acting on, your paraphrase.
+The script is the only thing that moves that content.
+
+**There is no human approval before placing, deliberately.** The script decides
+nothing: it copies bytes the agent wrote into the one file that agent was already
+supposed to write, and refuses everything else. It is also what the refusing rule
+asks for — return the content as text and let the parent keep it. Stopping for
+the human every time would stall an unattended run on a step with no decision in
+it. The human is told, in the journal and the round's report block, and is asked
+only when the mechanical path fails.
+
+## The generator's notes
+
+The generator's notes are `build-notes.md` in the round directory. A plugin
+update can arrive in the middle of a run, so a round directory begun before
+0.16.0 may hold the legacy `report.md` instead. Do not guess which one to hand on:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/returned_files.py" notes-path <round dir>
+```
+
+prints `build-notes.md` when it exists, otherwise the legacy `report.md`, and exits
+1 when there is neither. When both exist, the legacy file is ignored — it is older.
+
 ## The codex review step
 
 Read `harness.codexReview`. When it is `"auto"` (the default) or `true`, run an
@@ -359,7 +425,9 @@ and do the normal build step. Never treat that as an error.
 5. **Wait until every builder has reported done.** Builders message each other
    about interfaces; that is the point of a team. Step in only if one asks you to
    settle a disagreement about a pinned interface — decide, tell every builder it
-   touches, and journal the decision.
+   touches, and journal the decision. A builder that says its report was refused
+   has handed it back: place it as "A file an agent handed back" says, with
+   `--agent builder-<name>`, before the check below.
 6. **Check what they left**:
 
    ```
@@ -379,8 +447,9 @@ and do the normal build step. Never treat that as an error.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/team_build.py" deactivate
    ```
 
-   `report` joins the builders' own reports into `<round dir>/report.md`, which is
-   what the evaluator reads. Do not write or edit that file yourself.
+   `report` joins the builders' own reports (`reports/builder-<name>.md`) into
+   `<round dir>/build-notes.md`, which is what the evaluator reads. Do not write or
+   edit that file yourself.
 8. Run the project's `commands.build` and `commands.test` once and note the
    literal outcome in the journal — the builders tested their own parts, and this
    is the first time the whole has been run. Then continue with the round as
@@ -399,7 +468,7 @@ Read `harness.useSprints`.
 - `false` → **v2 mode**: skip contracting and sprints entirely. Planner output goes
   straight to one `harness-generator` that builds the whole thing in a single
   coherent session, committing continuously — or, when `harness.teamBuild` is
-  `true`, to a team build ("Team build" above), whose `report.md` lands in
+  `true`, to a team build ("Team build" above), whose `build-notes.md` lands in
   `.harness/final/01/`. Then run the final assessment loop
   below. Build round 2 revises against round 1's blocking issues, and so on. For
   the single build set `phase: "building"` with `currentSprint: null` and
@@ -408,9 +477,9 @@ Read `harness.useSprints`.
   as models sustain longer coherent sessions — with a capable enough model the
   decomposition buys nothing and costs a contract negotiation per sprint.
 
-If `harness.useEvaluator` is `false`, run generation only, write `report.md`, and tell
-the human plainly that nothing was verified and nothing is marked passed. Never let
-the generator's report stand in for a verdict.
+If `harness.useEvaluator` is `false`, run generation only — the generator writes
+`build-notes.md` — and tell the human plainly that nothing was verified and nothing
+is marked passed. Never let the generator's notes stand in for a verdict.
 
 ## The sprint loop
 
@@ -468,7 +537,8 @@ Set `phase: "building"` and `currentRound: 1`. If `harness.teamBuild` is `true`,
 starting point for the split plan's — and continue from the next step. Otherwise
 spawn a **fresh `harness-generator`**
 with the accepted contract. It implements, commits, self-checks its own build/typecheck/tests, and
-writes `report.md`.
+writes `build-notes.md` — or, if a rule outside the plugin refused that write, hands
+it back; place it then ("A file an agent handed back").
 
 If it reports a failing build or failing tests it could not fix, do not proceed to
 evaluation — that spends a whole cycle re-discovering a known fact. Go straight to
@@ -507,7 +577,8 @@ If `harness.parallelEvaluation` is `true`, run "Parallel evaluation" above for t
 round and skip to validating the verdict. Otherwise:
 
 Spawn a **fresh `harness-evaluator`** with `config.json`, `spec.md`, the contract,
-`report.md`, and the sprint directory. It reads `harness.browserVerification` to
+the generator's notes (the path `returned_files.py notes-path` prints — see "The
+generator's notes"), and the sprint directory. It reads `harness.browserVerification` to
 decide its verification mode, exercises the app through that mode — the browser via
 Playwright when enabled, the API, datastore and test suite in every mode — locates
 the cause of each failure in the code, and writes `qa.md`, `verdict.json`, and
@@ -521,8 +592,9 @@ as the regression check, and carries the rest — see its "Re-check rounds" sect
 This is a pointer to files, not a summary: do not tell it what the generator claims
 to have fixed.
 
-Validate the verdict with the plugin's checker — do not eyeball it against the
-schema yourself:
+If the evaluator handed `qa.md` or `verdict.json` back instead of writing it, place
+it first ("A file an agent handed back"). Then validate the verdict with the
+plugin's checker — do not eyeball it against the schema yourself:
 
 ```
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_verdict.py" .harness/sprints/NN/verdict.json \
@@ -636,7 +708,7 @@ For round `NN` starting at 01:
    **Fail** → set `phase: "final-building"` (leave `currentRound` at `NN` — the fix
    is written into this round's directory), run "Diagnosing a recurring issue" if
    it applies, then spawn a fresh generator against the
-   blocking issues only, which writes `.harness/final/NN/report.md`; then increment
+   blocking issues only, which writes `.harness/final/NN/build-notes.md`; then increment
    the round and return to step 1.
 6. Stop and ask the human when rounds would exceed `harness.maxFinalQaRounds`, or
    when a blocking issue hits the same recurrence limits as above.

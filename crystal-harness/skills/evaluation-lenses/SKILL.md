@@ -111,7 +111,8 @@ application at all.
    you are started; never write it yourself). Set `testChanges` to `reviewed` if it
    listed any change to the tests, `none` if it listed nothing, `absent` if there
    is no such file. If it says the suite was `weakened`, check each of its
-   `reasons` against the diff and against the generator's `report.md`: a deleted,
+   `reasons` against the diff and against the generator's notes — `build-notes.md`,
+   or the legacy `report.md` only when `build-notes.md` is absent: a deleted,
    skipped or re-pointed test with no stated, defensible reason is a blocking
    issue, because the suite it belonged to is evidence the other lenses lean on.
    The report also lists sleeps and retries added to tests
