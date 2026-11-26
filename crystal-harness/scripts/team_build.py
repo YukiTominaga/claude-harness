@@ -229,11 +229,15 @@ def cmd_validate(args):
 
 
 def cmd_activate(args):
-    project_dir = os.path.abspath(args.project_dir)
+    # realpath on both sides: on macOS /var is a symlink to /private/var, and
+    # os.getcwd() (the default project dir) already returns the resolved form, so
+    # an absolute split path given through the symlink would otherwise appear to
+    # lie outside the project.
+    project_dir = os.path.realpath(args.project_dir)
     code = cmd_validate(args)
     if code != 0:
         return code
-    split_path = os.path.abspath(args.split)
+    split_path = os.path.realpath(args.split)
     parts = os.path.relpath(os.path.dirname(split_path), project_dir).split(os.sep)
     if len(parts) != 3 or parts[0] != ".harness" or parts[1] not in ("sprints", "final"):
         print("team_build: the split plan must be .harness/sprints/NN/split.json or .harness/final/NN/split.json", file=sys.stderr)
